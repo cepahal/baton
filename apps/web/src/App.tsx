@@ -7,6 +7,7 @@ import { useSelection } from "./hooks/useSelection.js";
 import { useSessions } from "./hooks/useSessions.js";
 import { useStoreSessionIds } from "./hooks/useStore.js";
 import { EventStore } from "./lib/event-store.js";
+import { defaultSelection } from "./lib/selection.js";
 import { isLive } from "./lib/time.js";
 
 const MAX_COLUMNS = 3;
@@ -16,7 +17,8 @@ export function App() {
   const [store] = useState(() => new EventStore({ schedule: (flush) => setTimeout(flush, 16) }));
   const connection = useConnection(store);
   const seenIds = useStoreSessionIds(store);
-  const { sessions: unsorted, error, loaded } = useSessions(seenIds);
+  const sessionsState = useSessions(seenIds);
+  const { sessions: unsorted, error, loaded } = sessionsState;
   const now = useNow(1000);
   const sessions = useMemo(
     () => [...unsorted].sort((a, b) => b.lastActivity.localeCompare(a.lastActivity)),
@@ -26,14 +28,9 @@ export function App() {
 
   // First visit: open the sessions that are live right now.
   useEffect(() => {
-    if (!loaded) return;
-    initialize(
-      sessions
-        .filter((s) => isLive(s.lastActivity, Date.now()))
-        .slice(0, MAX_COLUMNS)
-        .map((s) => s.sessionId),
-    );
-  }, [loaded, sessions, initialize]);
+    const ids = defaultSelection(sessionsState, Date.now(), MAX_COLUMNS);
+    if (ids) initialize(ids);
+  }, [sessionsState, initialize]);
 
   const byId = useMemo(() => new Map(sessions.map((s) => [s.sessionId, s])), [sessions]);
 

@@ -5,9 +5,9 @@ export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "stopped
 
 export type ConnectionState = {
   status: ConnectionStatus;
-  /** Failed attempts since the last successful connection. */
+  /** Failed attempts since the last connection that stayed up for `stableMs`. */
   attempt: number;
-  /** When the next reconnect fires (`now()` clock), while reconnecting. */
+  /** When the next reconnect fires (`now()` clock). Unset while a socket is opening. */
   retryAt?: number;
   /** Hub epoch from the last `hello`. */
   epoch?: string;
@@ -35,6 +35,12 @@ export type ConnectionOptions = {
   onGap?(message: GapMessage): void;
   createSocket?: SocketFactory;
   backoff?: BackoffOptions;
+  /**
+   * How long a socket must stay open before backoff resets and the last hub
+   * error clears. A hub that accepts and then closes (bad query, stalled
+   * replay, slow client) keeps backing off and its error stays visible.
+   */
+  stableMs?: number;
   random?: () => number;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
@@ -50,6 +56,8 @@ export const createBrowserSocket: SocketFactory = (url, handlers) => {
   return { close: () => ws.close() };
 };
 
+export const DEFAULT_STABLE_MS = 5000;
+
 type StatePatch = { [K in keyof ConnectionState]?: ConnectionState[K] | undefined };
 
 /**
@@ -63,6 +71,7 @@ export class ConnectionManager {
   readonly #options: ConnectionOptions;
   #socket: SocketHandle | undefined;
   #timer: unknown;
+  #stableTimer: unknown;
   /** Bumped on every connect/stop so callbacks from an old socket are ignored. */
   #generation = 0;
 
@@ -87,6 +96,7 @@ export class ConnectionManager {
   stop(): void {
     this.#generation++;
     this.#clearTimer();
+    this.#clearStableTimer();
     this.#socket?.close();
     this.#socket = undefined;
     this.#update({ status: "stopped", retryAt: undefined });
@@ -117,7 +127,12 @@ export class ConnectionManager {
     const create = this.#options.createSocket ?? createBrowserSocket;
     this.#socket = create(this.url(), {
       onOpen: () => {
-        if (live()) this.#update({ status: "open", attempt: 0, error: undefined });
+        if (!live()) return;
+        this.#update({ status: "open" });
+        this.#stableTimer = this.#setTimer(() => {
+          this.#stableTimer = undefined;
+          if (live()) this.#update({ attempt: 0, error: undefined });
+        }, this.#options.stableMs ?? DEFAULT_STABLE_MS);
       },
       onMessage: (data) => {
         if (live()) this.#receive(data);
@@ -125,6 +140,7 @@ export class ConnectionManager {
       onClose: () => {
         if (!live()) return;
         this.#socket = undefined;
+        this.#clearStableTimer();
         this.#scheduleReconnect();
       },
     });
@@ -136,18 +152,31 @@ export class ConnectionManager {
     const delay = backoffDelay(attempt, options.backoff ?? DEFAULT_BACKOFF, options.random);
     const now = options.now ?? Date.now;
     this.#update({ status: "reconnecting", attempt: attempt + 1, retryAt: now() + delay });
-    const setTimer = options.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
-    this.#timer = setTimer(() => {
+    this.#timer = this.#setTimer(() => {
       this.#timer = undefined;
       this.#connect("reconnecting");
     }, delay);
   }
 
+  #setTimer(fn: () => void, ms: number): unknown {
+    return this.#options.setTimer ? this.#options.setTimer(fn, ms) : setTimeout(fn, ms);
+  }
+
+  #cancel(handle: unknown): void {
+    if (this.#options.clearTimer) this.#options.clearTimer(handle);
+    else clearTimeout(handle as ReturnType<typeof setTimeout>);
+  }
+
   #clearTimer(): void {
     if (this.#timer === undefined) return;
-    if (this.#options.clearTimer) this.#options.clearTimer(this.#timer);
-    else clearTimeout(this.#timer as ReturnType<typeof setTimeout>);
+    this.#cancel(this.#timer);
     this.#timer = undefined;
+  }
+
+  #clearStableTimer(): void {
+    if (this.#stableTimer === undefined) return;
+    this.#cancel(this.#stableTimer);
+    this.#stableTimer = undefined;
   }
 
   #receive(data: unknown): void {

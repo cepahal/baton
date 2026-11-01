@@ -8,6 +8,8 @@ import {
 } from "../src/lib/connection.js";
 import { EventStore } from "../src/lib/event-store.js";
 import { buildFeedRows } from "../src/lib/feed-rows.js";
+import { latestOnly } from "../src/lib/latest-only.js";
+import { defaultSelection, SELECTION_KEY, Selection } from "../src/lib/selection.js";
 import { formatAgo, isLive } from "../src/lib/time.js";
 
 function ev(seq: number, extra: Partial<BatonEvent> = {}): BatonEvent {
@@ -91,6 +93,7 @@ class FakeSockets {
 }
 
 describe("ConnectionManager", () => {
+  const STABLE_MS = 5000;
   function setup() {
     const sockets = new FakeSockets();
     const timers: { fn: () => void; ms: number }[] = [];
@@ -102,16 +105,19 @@ describe("ConnectionManager", () => {
       random: () => 1,
       now: () => 0,
       backoff: { baseMs: 100, maxMs: 1000 },
+      stableMs: STABLE_MS,
       setTimer: (fn, ms) => timers.push({ fn, ms }),
       clearTimer: () => {},
     });
-    return { sockets, timers, received, manager };
+    /** Reconnect timers, without the stable-connection timers. */
+    const backoffs = () => timers.filter((t) => t.ms !== STABLE_MS);
+    return { sockets, timers, backoffs, received, manager };
   }
   const send = (h: SocketHandlers, msg: unknown) => h.onMessage(JSON.stringify(msg));
   const hello = (epoch: string) => ({ type: "hello", protocol: 1, epoch, seq: 0, session: "all" });
 
   it("resumes with lastSeq and epoch after a drop, with growing backoff", () => {
-    const { sockets, timers, received, manager } = setup();
+    const { sockets, backoffs, received, manager } = setup();
     manager.start();
     expect(sockets.urls[0]).toBe("ws://h/ws?session=all");
     sockets.last.onOpen();
@@ -120,11 +126,11 @@ describe("ConnectionManager", () => {
     expect(received).toEqual([7]);
     sockets.last.onClose();
     expect(manager.getState().status).toBe("reconnecting");
-    expect(timers[0]?.ms).toBe(100);
-    timers[0]?.fn();
+    expect(backoffs()[0]?.ms).toBe(100);
+    backoffs()[0]?.fn();
     expect(sockets.urls[1]).toBe("ws://h/ws?session=all&lastSeq=7&epoch=E1");
     sockets.last.onClose();
-    expect(timers[1]?.ms).toBe(200);
+    expect(backoffs()[1]?.ms).toBe(200);
   });
 
   it("forgets lastSeq when the epoch changes and ignores invalid messages", () => {
@@ -140,6 +146,44 @@ describe("ConnectionManager", () => {
     expect(manager.getState().lastSeq).toBeUndefined();
   });
 
+  it("keeps backing off and shows the hub error when a socket opens then closes", () => {
+    const { sockets, backoffs, manager } = setup();
+    manager.start();
+    for (let i = 0; i < 3; i++) {
+      sockets.last.onOpen();
+      send(sockets.last, { type: "error", message: "invalid query" });
+      sockets.last.onClose();
+      backoffs().at(-1)?.fn();
+    }
+    expect(backoffs().map((t) => t.ms)).toEqual([100, 200, 400]);
+    expect(manager.getState()).toMatchObject({ attempt: 3, error: "invalid query" });
+  });
+
+  it("resets backoff and clears the error once a socket stays open", () => {
+    const { sockets, timers, manager } = setup();
+    manager.start();
+    sockets.last.onOpen();
+    send(sockets.last, { type: "error", message: "boom" });
+    sockets.last.onClose();
+    timers.at(-1)?.fn();
+    sockets.last.onOpen();
+    const stable = timers.at(-1);
+    expect(stable?.ms).toBe(STABLE_MS);
+    stable?.fn();
+    expect(manager.getState().attempt).toBe(0);
+    expect(manager.getState().error).toBeUndefined();
+  });
+
+  it("only offers retryNow while waiting out backoff", () => {
+    const { sockets, timers, manager } = setup();
+    manager.start();
+    sockets.last.onClose();
+    expect(manager.getState().retryAt).toBeDefined();
+    timers.at(-1)?.fn();
+    expect(manager.getState()).toMatchObject({ status: "reconnecting" });
+    expect(manager.getState().retryAt).toBeUndefined();
+  });
+
   it("ignores callbacks from a socket after stop", () => {
     const { sockets, timers, manager } = setup();
     manager.start();
@@ -148,5 +192,83 @@ describe("ConnectionManager", () => {
     old.onClose();
     expect(timers).toHaveLength(0);
     expect(manager.getState().status).toBe("stopped");
+  });
+});
+
+class MemoryStorage {
+  items = new Map<string, string>();
+  writes = 0;
+  getItem(key: string): string | null {
+    return this.items.get(key) ?? null;
+  }
+  setItem(key: string, value: string): void {
+    this.writes++;
+    this.items.set(key, value);
+  }
+}
+
+describe("Selection", () => {
+  it("doesn't write storage on load, so a later visit can still get defaults", () => {
+    const storage = new MemoryStorage();
+    new Selection(storage, 3);
+    expect(storage.writes).toBe(0);
+    const next = new Selection(storage, 3);
+    next.initialize(["a"]);
+    expect(next.get()).toEqual(["a"]);
+    expect(storage.getItem(SELECTION_KEY)).toBe('["a"]');
+  });
+
+  it("keeps a remembered or picked selection over defaults", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(SELECTION_KEY, '["x","y","z","w"]');
+    const remembered = new Selection(storage, 3);
+    remembered.initialize(["a"]);
+    expect(remembered.get()).toEqual(["x", "y", "z"]);
+
+    const picked = new Selection(new MemoryStorage(), 1);
+    picked.toggle("b");
+    picked.toggle("c");
+    picked.initialize(["a"]);
+    expect(picked.get()).toEqual(["b"]);
+  });
+});
+
+describe("defaultSelection", () => {
+  const session = (sessionId: string, lastActivity: string) => ({
+    sessionId,
+    projectPath: "/p",
+    projectName: "p",
+    lastActivity,
+    events: 1,
+  });
+
+  it("waits for a successful fetch", () => {
+    const now = 10_000_000;
+    const sessions = [session("live", new Date(now).toISOString()), session("old", ev(1).ts)];
+    expect(defaultSelection({ sessions: [], loaded: false }, now, 3)).toBeUndefined();
+    expect(
+      defaultSelection({ sessions: [], loaded: true, error: "HTTP 502" }, now, 3),
+    ).toBeUndefined();
+    expect(defaultSelection({ sessions, loaded: true }, now * 2, 3)).toEqual([]);
+    expect(defaultSelection({ sessions, loaded: true }, now, 3)).toEqual(["live"]);
+  });
+});
+
+describe("latestOnly", () => {
+  it("drops a response that settles after a newer one", async () => {
+    const pending: ((v: string) => void)[] = [];
+    const seen: string[] = [];
+    const call = latestOnly(
+      () => new Promise<string>((resolve) => pending.push(resolve)),
+      (v) => seen.push(v),
+      () => seen.push("error"),
+    );
+    const first = call();
+    const second = call();
+    pending[1]?.("new");
+    await second;
+    pending[0]?.("old");
+    await first;
+    expect(seen).toEqual(["new"]);
   });
 });

@@ -8,7 +8,8 @@ export function ConnectionBadge({ state, now, onRetry }: Props) {
     <div className={`conn conn-${state.status}`} role="status" aria-live="polite">
       <span className="conn-light" aria-hidden />
       <span className="conn-label">{label}</span>
-      {state.status === "reconnecting" && (
+      {/* Only while waiting out backoff: retryNow() can't help a socket that's already opening. */}
+      {state.status === "reconnecting" && state.retryAt !== undefined && (
         <button type="button" className="conn-retry" onClick={onRetry}>
           Retry
         </button>

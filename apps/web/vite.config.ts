@@ -1,5 +1,9 @@
 import react from "@vitejs/plugin-react";
 import { defaultClientConditions, defineConfig } from "vite";
+import { z } from "zod";
+
+// `pnpm dev` proxies to the daemon on BATON_PORT (same default as `baton start`).
+const port = z.coerce.number().int().min(1).max(65535).default(7777).parse(process.env.BATON_PORT);
 
 export default defineConfig({
   plugins: [react()],
@@ -10,8 +14,8 @@ export default defineConfig({
   server: {
     // `pnpm dev`: the daemon serves the API and socket; Vite serves the app.
     proxy: {
-      "/sessions": "http://127.0.0.1:7777",
-      "/ws": { target: "ws://127.0.0.1:7777", ws: true },
+      "/sessions": `http://127.0.0.1:${port}`,
+      "/ws": { target: `ws://127.0.0.1:${port}`, ws: true },
     },
   },
 });

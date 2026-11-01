@@ -11,8 +11,8 @@ npx wscat -c ws://127.0.0.1:7777/ws
 ```
 
 `baton start --help` lists every option: `--state-file`, `--backlog`,
-`--buffer-mb`, `--buffer-size`, `--active-minutes`, `--poll`, `--log-level`. Logs are pino
-JSON on stdout.
+`--buffer-mb`, `--buffer-size`, `--active-minutes`, `--poll`, `--log-level`,
+`--web-dir`. Logs are pino JSON on stdout.
 
 ## Pieces
 
@@ -123,6 +123,14 @@ code 1013. An invalid query closes it with 1008.
   within `--active-minutes`, newest `lastActivity` (transcript `ts`) first.
   `events` counts what the hub received since it started, backlog included.
 - `GET /health` → `{ ok, epoch, seq }`.
+- `GET /` and other paths: the built viewer from `--web-dir` (default
+  `apps/web/dist`, found relative to the daemon's own files, so it only works
+  when the daemon runs from this repo). If that directory has no `index.html`,
+  the daemon logs a warning and `/` returns a plain-text hint to run
+  `pnpm build`. The routes above take precedence over viewer files.
+- For viewer development, `pnpm --filter @baton/web dev` serves the app with
+  Vite and proxies `/sessions` and `/ws` to the daemon on `BATON_PORT`
+  (default 7777).
 
 ## Local-only
 

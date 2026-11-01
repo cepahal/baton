@@ -1,5 +1,6 @@
 import type { SessionInfo } from "@baton/core";
 import { useEffect, useState } from "react";
+import { latestOnly } from "../lib/latest-only.js";
 import { fetchSessions } from "../lib/sessions.js";
 
 export type SessionsState = {
@@ -17,15 +18,16 @@ export function useSessions(refreshKey: string, intervalMs = 5000): SessionsStat
   // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey only forces a refetch.
   useEffect(() => {
     const controller = new AbortController();
-    const load = () =>
-      fetchSessions(controller.signal).then(
-        (sessions) => setState({ sessions, loaded: true }),
-        (err: unknown) => {
-          if (controller.signal.aborted) return;
-          const error = err instanceof Error ? err.message : String(err);
-          setState((s) => ({ ...s, loaded: true, error }));
-        },
-      );
+    // Polls can overlap when the daemon is slow; only the newest response counts.
+    const load = latestOnly(
+      () => fetchSessions(controller.signal),
+      (sessions) => setState({ sessions, loaded: true }),
+      (err: unknown) => {
+        if (controller.signal.aborted) return;
+        const error = err instanceof Error ? err.message : String(err);
+        setState((s) => ({ ...s, loaded: true, error }));
+      },
+    );
     void load();
     const timer = setInterval(load, intervalMs);
     return () => {
