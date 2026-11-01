@@ -18,6 +18,7 @@ Options:
   --active-minutes <n>  How recent a change makes a session active (default 120)
   --poll                Poll files instead of using native file events
   --log-level <level>   fatal|error|warn|info|debug|trace|silent (default info)
+  --web-dir <dir>       Built viewer to serve at / (default apps/web/dist)
   -h, --help            Show this help
 `;
 
@@ -56,6 +57,7 @@ export function parseCli(argv: readonly string[]): CliResult {
       activeMinutes: values["active-minutes"],
       poll: values.poll,
       logLevel: values["log-level"],
+      webDir: values["web-dir"],
     });
     return { command: "start", config };
   } catch (err) {
@@ -80,6 +82,7 @@ function parse(argv: readonly string[]) {
       "active-minutes": { type: "string" },
       poll: { type: "boolean" },
       "log-level": { type: "string" },
+      "web-dir": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -113,8 +116,12 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
   logger.info(
-    { ws: `${daemon.url.replace("http", "ws")}/ws`, sessions: `${daemon.url}/sessions` },
-    "baton is running",
+    {
+      viewer: `${daemon.url}/`,
+      ws: `${daemon.url.replace("http", "ws")}/ws`,
+      sessions: `${daemon.url}/sessions`,
+    },
+    `baton is running: open ${daemon.url}/`,
   );
 
   const stop = (signal: NodeJS.Signals) => {

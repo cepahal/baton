@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import type { Logger } from "pino";
 import { type DaemonConfig, HOST } from "./config.js";
 import { MemoryEventLog } from "./event-log.js";
@@ -37,7 +39,9 @@ export async function startDaemon(config: DaemonConfig, logger: Logger): Promise
       ),
   });
   const hub = new Hub({ log, activeWindowMs, logger: hubLogger });
-  const server = await createServer(hub, logger.child({ component: "server" }));
+  const serverLogger = logger.child({ component: "server" });
+  const webDir = await viewerDir(config.webDir, serverLogger);
+  const server = await createServer(hub, serverLogger, webDir === undefined ? {} : { webDir });
   await server.listen({ host: HOST, port: config.port });
   const address = server.server.address();
   const port = typeof address === "object" && address ? address.port : config.port;
@@ -68,4 +72,15 @@ export async function startDaemon(config: DaemonConfig, logger: Logger): Promise
     return closing;
   };
   return { hub, watcher, server, url: `http://${HOST}:${port}`, port, close };
+}
+
+/** `dir` if it holds a built viewer, otherwise undefined (with a warning). */
+async function viewerDir(dir: string, logger: Logger): Promise<string | undefined> {
+  try {
+    if ((await stat(join(dir, "index.html"))).isFile()) return dir;
+  } catch {
+    // fall through
+  }
+  logger.warn({ webDir: dir }, "no built viewer found; run `pnpm build` to serve it at /");
+  return undefined;
 }

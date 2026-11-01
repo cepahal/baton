@@ -1,4 +1,5 @@
-import { truncate, utimes, writeFile } from "node:fs/promises";
+import { mkdir, truncate, utimes, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { SessionsResponse } from "@baton/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Daemon } from "../src/daemon.js";
@@ -302,5 +303,28 @@ describe("baton daemon", () => {
     clients.push(client);
     await expect(client.opened).rejects.toThrow("HTTP 403");
     await expect(connect("", { origin: "http://localhost:5173" })).resolves.toBeDefined();
+  });
+
+  it("serves the built viewer at / next to the API", async () => {
+    const webDir = join(dirs.root, "web");
+    await mkdir(join(webDir, "assets"), { recursive: true });
+    await writeFile(join(webDir, "index.html"), "<!doctype html><title>viewer</title>");
+    await writeFile(join(webDir, "assets", "app.js"), "console.log(1)");
+    daemon = await start(dirs, { webDir });
+
+    const index = await fetch(`${daemon.url}/`);
+    expect(index.status).toBe(200);
+    expect(index.headers.get("content-type")).toMatch(/text\/html/);
+    expect(await index.text()).toContain("<title>viewer</title>");
+    expect(await (await fetch(`${daemon.url}/assets/app.js`)).text()).toBe("console.log(1)");
+    expect((await fetch(`${daemon.url}/sessions`)).status).toBe(200);
+    await expect(connect()).resolves.toBeDefined();
+  });
+
+  it("explains how to build the viewer when it is missing", async () => {
+    daemon = await start(dirs, { webDir: join(dirs.root, "missing") });
+    const res = await fetch(`${daemon.url}/`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/pnpm build/);
   });
 });

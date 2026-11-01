@@ -112,6 +112,8 @@ describe("parseCli", () => {
       "--poll",
       "--log-level",
       "debug",
+      "--web-dir",
+      dirs.root,
     ]);
     expect(r).toEqual({
       command: "start",
@@ -125,6 +127,7 @@ describe("parseCli", () => {
         activeMinutes: 3,
         poll: true,
         logLevel: "debug",
+        webDir: dirs.root,
       },
     });
   });

@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 export const DEFAULT_PORT = 7777;
@@ -27,8 +28,14 @@ export const DaemonConfig = z.object({
   activeMinutes: int(1),
   poll: z.boolean(),
   logLevel: z.enum(LOG_LEVELS),
+  /** Built viewer (`apps/web/dist`) served at `/`. */
+  webDir: z.string().min(1),
 });
 export type DaemonConfig = z.infer<typeof DaemonConfig>;
+
+/** `apps/web/dist` in this repo; the same depth from `src/` and `dist/`. */
+export const defaultWebDir = () =>
+  fileURLToPath(new URL("../../../apps/web/dist", import.meta.url));
 
 export const defaultProjectsDir = () => join(homedir(), ".claude", "projects");
 
@@ -53,10 +60,12 @@ export function resolveConfig(input: Partial<Record<keyof DaemonConfig, unknown>
     activeMinutes: input.activeMinutes ?? 120,
     poll: input.poll ?? false,
     logLevel: input.logLevel ?? "info",
+    webDir: input.webDir ?? defaultWebDir(),
   });
   return {
     ...config,
     projectsDir: resolve(config.projectsDir),
     stateFile: resolve(config.stateFile),
+    webDir: resolve(config.webDir),
   };
 }

@@ -1,4 +1,5 @@
 import { type SessionsResponse, SubscribeQuery } from "@baton/core";
+import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyRequest, LogController } from "fastify";
 import type { Logger } from "pino";
@@ -32,7 +33,15 @@ export function isLocalRequest(headers: FastifyRequest["headers"]): boolean {
   return origin === undefined || LOCAL_HOSTNAMES.has(hostnameOf(origin, true) ?? "");
 }
 
-export async function createServer(hub: Hub, logger: Logger) {
+export type ServerOptions = {
+  /** Directory of the built viewer, served at `/`. Without it `/` explains how to build it. */
+  webDir?: string;
+};
+
+const NO_VIEWER =
+  "Baton is running, but the viewer isn't built. Run `pnpm build`, then restart `baton start`.\n";
+
+export async function createServer(hub: Hub, logger: Logger, options: ServerOptions = {}) {
   const app = Fastify({
     loggerInstance: logger,
     logController: new LogController({ disableRequestLogging: true }),
@@ -78,6 +87,13 @@ export async function createServer(hub: Hub, logger: Logger) {
   app.get("/sessions", async (): Promise<SessionsResponse> => ({ sessions: hub.sessions() }));
 
   app.get("/health", async () => ({ ok: true, epoch: hub.epoch, seq: hub.seq }));
+
+  if (options.webDir === undefined) {
+    app.get("/", async (_req, reply) => reply.type("text/plain").send(NO_VIEWER));
+  } else {
+    // Registered last; the routes above are more specific and win.
+    await app.register(fastifyStatic, { root: options.webDir, prefix: "/" });
+  }
 
   return app;
 }

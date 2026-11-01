@@ -7,4 +7,11 @@ export default defineConfig({
     // Resolve workspace packages to their TypeScript source (the "source" export condition).
     conditions: ["source", ...defaultClientConditions],
   },
+  server: {
+    // `pnpm dev`: the daemon serves the API and socket; Vite serves the app.
+    proxy: {
+      "/sessions": "http://127.0.0.1:7777",
+      "/ws": { target: "ws://127.0.0.1:7777", ws: true },
+    },
+  },
 });
