@@ -4,6 +4,7 @@ import {
   AssistantRecord,
   type ContentBlock,
   HANDLED_RECORD_TYPES,
+  IGNORED_RECORD_TYPES,
   SystemRecord,
   TextBlock,
   ThinkingBlock,
@@ -11,11 +12,24 @@ import {
   ToolUseBlock,
   UserRecord,
 } from "./records.js";
-import { summarizeToolCall, summarizeToolResult } from "./tool-format.js";
+import {
+  isOneLiner,
+  summarizeText,
+  summarizeToolCall,
+  summarizeToolResult,
+  type ToolCallInfo,
+} from "./tool-format.js";
 import { mergePromptSegments, segmentUserText } from "./user-content.js";
 
 export type ParseWarning = { line: number; reason: string };
 export type ParseResult = { events: BatonEvent[]; warnings: ParseWarning[] };
+
+export type ParserOptions = {
+  /** Lines that look broken: invalid JSON, or a handled record that fails its schema. */
+  onWarning?: (warning: ParseWarning) => void;
+  /** Debug mode: called with a message for every record of an unknown type. */
+  debug?: (message: string) => void;
+};
 
 type Draft = { kind: BatonEventKind; text: string; meta?: BatonEventMeta };
 type CommonRecord = {
@@ -25,11 +39,14 @@ type CommonRecord = {
   cwd?: string | undefined;
   gitBranch?: string | undefined;
   version?: string | undefined;
+  isSidechain?: boolean | undefined;
+  agentId?: string | undefined;
 };
 
 const RecordType = z.looseObject({ type: z.string() });
 const isHandled = (t: string): t is (typeof HANDLED_RECORD_TYPES)[number] =>
   (HANDLED_RECORD_TYPES as readonly string[]).includes(t);
+const isIgnored = (t: string): boolean => (IGNORED_RECORD_TYPES as readonly string[]).includes(t);
 
 /** Builds a meta object, leaving out undefined values. */
 function meta(fields: Record<string, JsonValue | undefined>): BatonEventMeta {
@@ -39,13 +56,23 @@ function meta(fields: Record<string, JsonValue | undefined>): BatonEventMeta {
 }
 
 /**
- * Incremental transcript parser: feed it lines in file order, get events back.
- * Holds per-session state (seq counters, tool names) but does no I/O.
- * Never throws on bad input; problems come back as warnings.
+ * A system event: one-liners as is; anything longer gets a one-line recap in
+ * `text` and the original in `meta.full`.
  */
-export function createTranscriptParser() {
+function systemDraft(text: string, fields: Record<string, JsonValue | undefined>): Draft {
+  const t = text.trim();
+  if (isOneLiner(t)) return { kind: "system", text: t, meta: meta(fields) };
+  return { kind: "system", text: summarizeText(t), meta: meta({ ...fields, full: t }) };
+}
+
+/**
+ * Incremental transcript parser: feed it lines in file order, get events back.
+ * Holds per-session state (seq counters, tool calls) but does no I/O.
+ * Never throws on bad input: a line it can't use yields no events.
+ */
+export function createTranscriptParser(options: ParserOptions = {}) {
   const sessions = new Map<string, { seq: number; projectPath: string }>();
-  const toolNames = new Map<string, string>();
+  const toolCalls = new Map<string, ToolCallInfo>();
   let lineNo = 0;
 
   function userDrafts(r: UserRecord): Draft[] {
@@ -60,15 +87,14 @@ export function createTranscriptParser() {
       if (text.success) {
         if (r.isCompactSummary || r.isMeta) {
           const source = r.isCompactSummary ? "compact_summary" : "meta";
-          if (text.data.text.trim())
-            drafts.push({ kind: "system", text: text.data.text, meta: { source } });
+          if (text.data.text.trim()) drafts.push(systemDraft(text.data.text, { source }));
           continue;
         }
         for (const s of mergePromptSegments(segmentUserText(text.data.text))) {
           if (s.label === "prompt") {
             drafts.push({ kind: "prompt", text: s.text, meta: { sources: s.sources } });
           } else {
-            drafts.push({ kind: "system", text: s.text, meta: { source: s.source } });
+            drafts.push(systemDraft(s.text, { source: s.source }));
           }
         }
         continue;
@@ -77,13 +103,14 @@ export function createTranscriptParser() {
       const result = ToolResultBlock.safeParse(block);
       if (result.success) {
         const { tool_use_id, content, is_error } = result.data;
-        const s = summarizeToolResult(content);
+        const call = toolCalls.get(tool_use_id);
+        const s = summarizeToolResult(content, { call, isError: is_error, cwd: r.cwd });
         drafts.push({
           kind: "tool_result",
           text: s.summary,
           meta: meta({
             toolUseId: tool_use_id,
-            toolName: toolNames.get(tool_use_id),
+            toolName: call?.name,
             isError: is_error ?? false,
             lines: s.lines,
             nonText: s.nonText || undefined,
@@ -116,10 +143,10 @@ export function createTranscriptParser() {
       const tool = ToolUseBlock.safeParse(block);
       if (tool.success) {
         const { id, name, input } = tool.data;
-        toolNames.set(id, name);
+        toolCalls.set(id, { name, input });
         drafts.push({
           kind: "tool_call",
-          text: summarizeToolCall(name, input),
+          text: summarizeToolCall(name, input, r.cwd),
           meta: { toolName: name, toolUseId: id, input },
         });
       }
@@ -130,13 +157,7 @@ export function createTranscriptParser() {
 
   function systemDrafts(r: SystemRecord): Draft[] {
     if (!r.content?.trim()) return [];
-    return [
-      {
-        kind: "system",
-        text: r.content,
-        meta: meta({ source: r.subtype ?? "system", level: r.level }),
-      },
-    ];
+    return [systemDraft(r.content, { source: r.subtype ?? "system", level: r.level })];
   }
 
   function emit(r: CommonRecord, drafts: Draft[]): BatonEvent[] {
@@ -159,7 +180,10 @@ export function createTranscriptParser() {
     }
     if (r.cwd) session.projectPath = r.cwd;
 
+    // Subagent work: viewers fold it under the Agent/Task call that started it.
+    const sidechain = r.isSidechain ? meta({ sidechain: true, agentId: r.agentId }) : {};
     drafts.forEach((d, i) => {
+      const m = { ...d.meta, ...sidechain };
       events.push({
         id: `${r.uuid}:${i}`,
         sessionId: r.sessionId,
@@ -168,20 +192,20 @@ export function createTranscriptParser() {
         seq: session.seq++,
         kind: d.kind,
         text: d.text,
-        ...(d.meta && Object.keys(d.meta).length > 0 ? { meta: d.meta } : {}),
+        ...(Object.keys(m).length > 0 ? { meta: m } : {}),
       });
     });
     return events;
   }
 
-  function parseLine(line: string): ParseResult {
+  /** One JSONL line in, zero or more events out. */
+  function parseLine(line: string): BatonEvent[] {
     lineNo++;
-    const none: ParseResult = { events: [], warnings: [] };
-    if (line.trim() === "") return none;
-    const warn = (reason: string): ParseResult => ({
-      events: [],
-      warnings: [{ line: lineNo, reason }],
-    });
+    if (line.trim() === "") return [];
+    const warn = (reason: string): BatonEvent[] => {
+      options.onWarning?.({ line: lineNo, reason });
+      return [];
+    };
 
     let raw: unknown;
     try {
@@ -192,7 +216,11 @@ export function createTranscriptParser() {
     const head = RecordType.safeParse(raw);
     if (!head.success) return warn("not a transcript record");
     const type = head.data.type;
-    if (!isHandled(type)) return none;
+    if (!isHandled(type)) {
+      if (!isIgnored(type))
+        options.debug?.(`line ${lineNo}: dropped unknown record type "${type}"`);
+      return [];
+    }
 
     const parsed =
       type === "user"
@@ -214,20 +242,20 @@ export function createTranscriptParser() {
         : r.type === "assistant"
           ? assistantDrafts(r)
           : systemDrafts(r);
-    return { events: emit(r, drafts), warnings: [] };
+    return emit(r, drafts);
   }
 
   return { parseLine };
 }
 
-/** Parses a whole transcript file's contents. */
-export function parseTranscript(text: string): ParseResult {
-  const parser = createTranscriptParser();
-  const result: ParseResult = { events: [], warnings: [] };
-  for (const line of text.split(/\r?\n/)) {
-    const r = parser.parseLine(line);
-    result.events.push(...r.events);
-    result.warnings.push(...r.warnings);
-  }
-  return result;
+/** Parses a whole transcript file's contents, collecting warnings. */
+export function parseTranscript(
+  text: string,
+  options: Pick<ParserOptions, "debug"> = {},
+): ParseResult {
+  const warnings: ParseWarning[] = [];
+  const parser = createTranscriptParser({ ...options, onWarning: (w) => warnings.push(w) });
+  const events: BatonEvent[] = [];
+  for (const line of text.split(/\r?\n/)) events.push(...parser.parseLine(line));
+  return { events, warnings };
 }

@@ -1,7 +1,14 @@
 import type { BatonEvent } from "./event.js";
+import { keepChars, truncateBytes } from "./transcript/truncate.js";
 
 /** How far thinking text is kept when `thinking: "truncate"`. */
 export const COMPACT_THINKING_MAX = 500;
+
+/** Replies longer than this many characters are cut for the handoff. */
+export const COMPACT_REPLY_MAX = 1000;
+
+/** No `text` in the handoff is longer than this many UTF-8 bytes (plus a marker). */
+export const COMPACT_TEXT_MAX_BYTES = 4096;
 
 export type CompactOptions = {
   /** "drop" (default) removes thinking events; "truncate" keeps the first 500 chars. */
@@ -29,17 +36,19 @@ export function compactForLLM(
   const out: BatonEvent[] = [];
 
   for (const e of events) {
+    // The parent's Agent/Task call and result already summarize subagent work.
+    if (e.meta?.sidechain === true) continue;
+
     switch (e.kind) {
       case "system":
         break;
       case "thinking":
         if (thinking === "truncate") {
-          const text =
-            e.text.length > COMPACT_THINKING_MAX
-              ? `${e.text.slice(0, COMPACT_THINKING_MAX)}…`
-              : e.text;
-          out.push({ ...e, text });
+          out.push({ ...e, text: keepChars(e.text, COMPACT_THINKING_MAX) });
         }
+        break;
+      case "reply":
+        out.push({ ...e, text: keepChars(e.text, COMPACT_REPLY_MAX) });
         break;
       case "tool_result":
         out.push(withoutMeta(e, "full"));
@@ -51,5 +60,8 @@ export function compactForLLM(
         out.push(e);
     }
   }
-  return out;
+  return out.map((e) => {
+    const text = truncateBytes(e.text, COMPACT_TEXT_MAX_BYTES);
+    return text === e.text ? e : { ...e, text };
+  });
 }

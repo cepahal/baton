@@ -130,16 +130,31 @@ sees a record that yields an event for an unseen `sessionId`).
   | `Agent` / `Task`                        | `description`                     |
   | anything else                           | `JSON.stringify(input)`           |
 
-- Newlines and runs of whitespace collapse to a single space.
+- Paths inside the record's `cwd` are shown relative to it, with `/` separators
+  (`C:\proj\src\a.ts` in `C:\proj` → `src/a.ts`). Other paths are shown as is.
+- Newlines and runs of whitespace collapse to a single space. Lengths count
+  code points, and cuts never split a surrogate pair.
 - `meta`: `{ toolName, toolUseId, input }`. `toolUseId` is the block `id`;
   `input` is the full tool input.
 
 ### `tool_result` ← `type: "user"`, `tool_result` block
 
-- `text`: a **one-line summary**: the first non-empty line of the result text
-  (string content, or `text` blocks joined with `\n`), at most **120 chars**. If
-  more non-empty lines follow, append ` (+N lines)`. If there is no text, use
-  `(no output)`.
+- `text`: a **one-line summary**, at most **120 chars**, built from the result
+  text (string content, or `text` blocks joined with `\n`) and the matching
+  `tool_call`. `<call>` below is the call's `<tool> <short args>`; "lines" are
+  non-empty lines.
+
+  | Result of                  | `text`                                                                                                              |
+  | -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+  | `Bash`, `PowerShell`       | `Bash → exit 0, 42 lines` (exit code from a leading `Exit code N` line; `error` if failed without one; `no output`) |
+  | `Read`                     | `Read src/api.ts (180 lines)` (numbered lines), or `(1 attachment)` for images                                      |
+  | `Write`                    | `Write src/a.ts (12 lines)` (lines of `input.content`)                                                              |
+  | `Edit`, `NotebookEdit`     | `Edit src/a.ts → ok`                                                                                                |
+  | `Grep`, `Glob`             | `Grep TODO → 7 lines`, or `→ no matches`                                                                            |
+  | any tool, `is_error: true` | `<call> → error: <first line>` (`<tool_use_error>` tags removed)                                                    |
+  | any other tool             | `<call> → <first line> (+N lines)`, or `→ no output`                                                                |
+  | a call core never saw      | `<first line> (+N lines)`, or `(no output)`                                                                         |
+
 - `meta`: `{ toolUseId, toolName?, isError, lines, nonText?, full }`.
   - `toolName`: from the matching `tool_call`, if core saw it.
   - `isError`: the block's `is_error` (default `false`).
@@ -154,9 +169,27 @@ sees a record that yields an event for an unseen `sessionId`).
   [Labelling](#labelling-user-side-content)). `meta`: `{ source }`.
 - From `type: "system"` records that have a non-empty `content` (e.g.
   `compact_boundary` → "Conversation compacted", `local_command`,
-  `informational`): `text` is `content`, `meta` is `{ source: <subtype>, level? }`.
+  `informational`): `meta` is `{ source: <subtype>, level? }`.
   System records without content (`turn_duration`, `stop_hook_summary`, …)
   emit nothing.
+
+`text` is always a single line, so the viewer can show system events inline:
+
+- If the trimmed content is one line of at most 120 chars, `text` is that line.
+- Otherwise `text` is a recap (the first non-empty line, cut to fit, plus
+  ` (+N lines)` if more non-empty lines follow) and the trimmed original is in
+  `meta.full`, the same way `tool_result` works.
+
+### Subagent (sidechain) events
+
+Records with `isSidechain: true` come from a subagent started by an `Agent` /
+`Task` tool call. They're parsed like any other record, and every event from
+them also gets `meta.sidechain: true` and `meta.agentId` (when the record has
+one). The viewer shows them as a collapsed group, closed by default, under the
+tool call that started them. Compaction drops them (see below).
+
+None of the local transcripts surveyed so far contain sidechain records, so
+there's no fixture for them yet. The test uses synthetic records.
 
 ### Dropped
 
@@ -168,18 +201,29 @@ These are not human-readable and never produce events:
 - `queue-operation`.
 - `cost-state`.
 - `redacted_thinking` blocks and every thinking `signature`.
-- **Any record `type` not listed in this document.** Types seen in real
-  transcripts that fall under this rule today: `file-history-snapshot`,
-  `file-history-delta`, `last-prompt`, `ai-title`, `custom-title`, `agent-name`,
-  `mode`, `permission-mode`, `atis-latch`, `tools-used`. New Claude Code versions
-  will add more, and core must drop them silently.
+- Bookkeeping records: `file-history-snapshot`, `file-history-delta`,
+  `last-prompt`, `ai-title`, `custom-title`, `agent-name`, `summary`, `mode`,
+  `permission-mode`, `atis-latch`, `tools-used` (`IGNORED_RECORD_TYPES` in core).
+- **Any other record `type` not listed in this document.** New Claude Code
+  versions will add more. Core drops them too, but reports each one to the
+  `debug` hook (debug mode only) so format changes get noticed.
 
 ### Robustness
 
-- A line that isn't valid JSON, or a `user` / `assistant` / `system` record that
-  doesn't match the schema core expects, is skipped. It's reported to the
-  caller as a parse warning (`{ line, reason }`) and never thrown. Unknown record
-  types are dropped without a warning.
+```ts
+const parser = createTranscriptParser({ onWarning?, debug? });
+parser.parseLine(raw: string): BatonEvent[]   // one JSONL line → 0..n events
+parseTranscript(text, { debug? }): { events, warnings }
+```
+
+- `parseLine` never throws. A blank line, a half-written line, invalid JSON, a
+  non-object, or a `user` / `assistant` / `system` record that doesn't match the
+  schema core expects returns `[]`. Broken lines (everything but blank lines and
+  unknown types) also go to `onWarning` as `{ line, reason }`.
+- Input schemas are lenient: unknown fields are kept and ignored
+  (`z.looseObject`, zod 4's `.passthrough()`), and one malformed or unknown
+  content block is skipped without rejecting the rest of its record. Output is
+  strict: every event matches `BatonEvent`.
 - Assistant messages are streamed as several records sharing one `message.id`,
   usually one content block each. Core handles each record independently. The
   `<uuid>:<n>` id makes repeats harmless.
@@ -189,22 +233,50 @@ These are not human-readable and never produce events:
 ## Compaction
 
 `compactForLLM(events, { thinking?: "drop" | "truncate" })` returns a new array
-for handing a session to another LLM. It never changes its input.
+for handing a session to another LLM. It never changes its input. The full
+stream the viewer shows is never shortened. These rules apply only to the handoff.
 
-| Kind                               | Compact form                                                                           |
-| ---------------------------------- | -------------------------------------------------------------------------------------- |
-| `system`                           | dropped                                                                                |
-| `thinking`                         | dropped (default), or with `thinking: "truncate"` cut to the first **500 chars** + `…` |
-| `tool_result`                      | kept as the one-line summary; `meta.full` removed                                      |
-| `tool_call`                        | kept as `<tool> <short args>`; `meta.input` removed                                    |
-| `session_start`, `prompt`, `reply` | unchanged                                                                              |
+| Kind                            | Compact form                                                                           |
+| ------------------------------- | -------------------------------------------------------------------------------------- |
+| `system`                        | dropped                                                                                |
+| any event with `meta.sidechain` | dropped (the parent's `Agent`/`Task` call and result already say what it did)          |
+| `thinking`                      | dropped (default), or with `thinking: "truncate"` cut to the first **500 chars** + `…` |
+| `tool_result`                   | kept as the one-line summary; `meta.full` removed                                      |
+| `tool_call`                     | kept as `<tool> <short args>`; `meta.input` removed                                    |
+| `reply`                         | cut to the first **1000 chars** + `…`                                                  |
+| `session_start`, `prompt`       | unchanged                                                                              |
+
+Then, for every event left: a `text` over **4 KB** (4096 UTF-8 bytes) is cut on
+a code point boundary and gets the marker `… [truncated, N bytes total]`.
 
 `seq` is not renumbered, so gaps show where events were removed. If removing a
 key leaves `meta` empty, `meta` is omitted.
 
+### Size target
+
+The handoff must be **more than 90% smaller than the raw transcript**, measured
+as UTF-8 bytes of `compactForLLM` output written as JSONL vs. the raw JSONL.
+`measureReduction(raw)` in core computes it. A test enforces it on every fixture,
+and `pnpm report` prints it:
+
+| Fixture      | Raw      | Full view | Handoff | Reduction |
+| ------------ | -------- | --------- | ------- | --------- |
+| api-requests | 410.9 KB | 48.8 KB   | 22.9 KB | 94.4%     |
+| heavy-tools  | 405.5 KB | 80.0 KB   | 33.1 KB | 91.8%     |
+| mixed        | 388.6 KB | 75.7 KB   | 29.3 KB | 92.5%     |
+
+## Decided
+
+- Subagent records: shown in the viewer as a closed dropdown under their parent
+  tool call. Dropped from the handoff.
+- `system` events: shown in the viewer. Ones that are already a single line are
+  shown as is; everything else is recapped into one line (full text in `meta.full`).
+- Long replies: never shortened in the viewer, but cut in the handoff.
+
 ## Open questions
 
-- Sidechain (subagent) records (`isSidechain: true`): show them, or show them
-  grouped under their parent tool call? For now they are treated like any other record.
-- Should `system` events be hidden by default in the viewer (shown on demand)?
-- Should compaction also shorten long `reply` text, or summarize old turns?
+- Should compaction summarize old turns as well, beyond the per-event rules above?
+- Should the 4 KB `text` cap also apply to the full view? Today it applies only
+  to the handoff, because the full view is meant to never be shortened.
+- How does a viewer match a sidechain group to its parent `Agent` call? No real
+  sidechain transcript has been captured yet to confirm which field links them.

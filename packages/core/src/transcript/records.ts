@@ -53,6 +53,7 @@ const RecordBase = {
   gitBranch: z.string().optional(),
   version: z.string().optional(),
   isSidechain: z.boolean().optional(),
+  agentId: z.string().optional(),
 };
 
 export const UserRecord = z.looseObject({
@@ -87,3 +88,28 @@ export type SystemRecord = z.infer<typeof SystemRecord>;
 
 /** Record types that can produce events. Everything else is dropped. */
 export const HANDLED_RECORD_TYPES = ["user", "assistant", "system"] as const;
+
+/**
+ * Record types known to hold nothing a human reads. They're dropped quietly;
+ * any other unhandled type is also dropped, but reported to the debug hook so
+ * format changes get noticed.
+ */
+export const IGNORED_RECORD_TYPES = [
+  "attachment",
+  "api-request",
+  "api-request-blob",
+  "api-request-shape",
+  "queue-operation",
+  "cost-state",
+  "file-history-snapshot",
+  "file-history-delta",
+  "last-prompt",
+  "ai-title",
+  "custom-title",
+  "agent-name",
+  "summary",
+  "mode",
+  "permission-mode",
+  "atis-latch",
+  "tools-used",
+] as const;

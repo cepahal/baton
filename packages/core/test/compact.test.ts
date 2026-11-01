@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   type BatonEvent,
+  COMPACT_REPLY_MAX,
   COMPACT_THINKING_MAX,
   compactForLLM,
   parseTranscript,
@@ -67,6 +68,22 @@ describe("compactForLLM", () => {
     expect(compactForLLM([ev("thinking", "short")], { thinking: "truncate" })[0]?.text).toBe(
       "short",
     );
+  });
+
+  it("cuts long replies for the handoff and keeps short ones", () => {
+    const long = "r".repeat(COMPACT_REPLY_MAX + 1);
+    const [cutReply, shortReply] = compactForLLM([ev("reply", long), ev("reply", "ok")]);
+    expect(cutReply?.text).toBe(`${"r".repeat(COMPACT_REPLY_MAX)}…`);
+    expect(shortReply?.text).toBe("ok");
+  });
+
+  it("drops subagent (sidechain) events", () => {
+    const out = compactForLLM([
+      ev("tool_call", "Agent Find it", { toolName: "Agent" }),
+      ev("reply", "inside the subagent", { sidechain: true, agentId: "a1" }),
+      ev("tool_result", "Found it.", { toolName: "Agent", full: "Found it." }),
+    ]);
+    expect(out.map((e) => e.text)).toEqual(["Agent Find it", "Found it."]);
   });
 
   it("does not modify its input", () => {

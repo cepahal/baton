@@ -56,6 +56,12 @@ README). Never commit an unredacted transcript. New fixtures must pass
 `test/fixtures.test.ts`, which scans for home-directory paths, emails, and
 key-like strings.
 
+`test/__snapshots__/` holds per-fixture snapshots of both views
+(`*.events.tsv` digest, `*.compact.jsonl` handoff). When a parser change
+alters them on purpose, review the diff, then update with `pnpm test -u`.
+The handoff must stay **>90% smaller than the raw fixture bytes**; a test
+enforces it and `pnpm report` prints the numbers.
+
 ## Commands
 
 pnpm is pinned via `packageManager`; if `pnpm` isn't on PATH, use `corepack pnpm`.
@@ -68,6 +74,8 @@ pnpm typecheck   # tsc --noEmit in every package
 pnpm test        # vitest run (all packages)
 pnpm build       # tsc / vite build
 pnpm check       # lint + typecheck + test + build (what CI runs)
+pnpm report      # size-reduction report: raw transcript bytes vs. parser output
+pnpm coverage    # test coverage of packages/core/src
 ```
 
 **Run `pnpm check` before declaring a task done.** A task isn't done until it

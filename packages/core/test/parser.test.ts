@@ -1,27 +1,7 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BatonEvent, createTranscriptParser, parseTranscript } from "../src/index.js";
+import { BatonEvent, createTranscriptParser, ONE_LINE_MAX, parseTranscript } from "../src/index.js";
+import { assistant, base, FIXTURES, jsonl, readFixture, SESSION, user } from "./helpers.js";
 
-const SESSION = "00000000-0000-4000-8000-000000000001";
-let n = 0;
-const base = () => ({
-  uuid: `u${++n}`,
-  sessionId: SESSION,
-  timestamp: "2026-11-01T12:00:00.000Z",
-  cwd: "/home/dev/proj",
-  gitBranch: "main",
-  version: "2.1.300",
-});
-const user = (content: unknown, extra: object = {}) =>
-  JSON.stringify({ ...base(), type: "user", message: { role: "user", content }, ...extra });
-const assistant = (content: unknown[]) =>
-  JSON.stringify({
-    ...base(),
-    type: "assistant",
-    message: { role: "assistant", model: "claude-x", content },
-  });
-const jsonl = (...lines: string[]) => lines.join("\n");
 const kinds = (text: string) => parseTranscript(text).events.map((e) => e.kind);
 
 describe("parseTranscript", () => {
@@ -85,7 +65,7 @@ describe("parseTranscript", () => {
       ["system", "ctx"],
       ["prompt", "do it"],
       ["tool_call", "Bash ls"],
-      ["tool_result", "a (+2 lines)"],
+      ["tool_result", "Bash → exit 0, 3 lines"],
       ["system", "summary of earlier work"],
       ["system", "<local-command-caveat>caveat</local-command-caveat>"],
     ]);
@@ -171,14 +151,79 @@ describe("parseTranscript", () => {
   it("keeps seq counting across parseLine calls", () => {
     const p = createTranscriptParser();
     p.parseLine(user("one"));
-    expect(p.parseLine(user("two")).events.map((e) => e.seq)).toEqual([2]);
+    expect(p.parseLine(user("two")).map((e) => e.seq)).toEqual([2]);
   });
 });
 
-describe.each(["heavy-tools", "api-requests", "mixed"])("fixture %s", (name) => {
-  const { events, warnings } = parseTranscript(
-    readFileSync(join(import.meta.dirname, "fixtures", `${name}.jsonl`), "utf8"),
-  );
+describe("system events", () => {
+  const sysEvents = (text: string) =>
+    parseTranscript(text).events.filter((e) => e.kind === "system");
+
+  it("keeps one-liners as they are", () => {
+    const [e] = sysEvents(user("<system-reminder>  short note </system-reminder>hi"));
+    expect(e).toMatchObject({ text: "short note", meta: { source: "system-reminder" } });
+    expect(e?.meta).not.toHaveProperty("full");
+  });
+
+  it("recaps multi-line content into one line and keeps the original in meta.full", () => {
+    const body = "Tasks:\n\n- one\n- two";
+    const [e] = sysEvents(user(`<task-notification>${body}</task-notification>`));
+    expect(e).toMatchObject({
+      text: "Tasks: (+2 lines)",
+      meta: { source: "task-notification", full: body },
+    });
+  });
+
+  it("recaps a single line that is too long", () => {
+    const long = "x".repeat(300);
+    const [e] = sysEvents(user(long, { isCompactSummary: true }));
+    expect(e?.text.length).toBeLessThanOrEqual(ONE_LINE_MAX);
+    expect(e?.meta).toEqual({ source: "compact_summary", full: long });
+  });
+
+  it("recaps system records the same way", () => {
+    const rec = JSON.stringify({
+      ...base(),
+      type: "system",
+      subtype: "informational",
+      content: "line 1\nline 2",
+    });
+    expect(sysEvents(rec)[0]).toMatchObject({
+      text: "line 1 (+1 lines)",
+      meta: { source: "informational", full: "line 1\nline 2" },
+    });
+  });
+});
+
+describe("subagent (sidechain) records", () => {
+  it("tags their events with sidechain and agentId", () => {
+    const { events } = parseTranscript(
+      jsonl(
+        assistant([
+          { type: "tool_use", id: "t1", name: "Agent", input: { description: "Find it" } },
+        ]),
+        user("Find the config loader", { isSidechain: true, agentId: "a1" }),
+        JSON.stringify({
+          ...base(),
+          type: "assistant",
+          isSidechain: true,
+          agentId: "a1",
+          message: { model: "claude-x", content: [{ type: "text", text: "Found it." }] },
+        }),
+      ),
+    );
+    expect(
+      events.slice(1).map((e) => [e.kind, e.meta?.sidechain ?? false, e.meta?.agentId]),
+    ).toEqual([
+      ["tool_call", false, undefined],
+      ["prompt", true, "a1"],
+      ["reply", true, "a1"],
+    ]);
+  });
+});
+
+describe.each(FIXTURES)("fixture %s", (name) => {
+  const { events, warnings } = parseTranscript(readFixture(name));
 
   it("parses without warnings into valid events", () => {
     expect(warnings).toEqual([]);
