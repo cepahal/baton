@@ -12,6 +12,21 @@ export {
   BatonEventMeta,
   JsonValue,
 } from "./event.js";
+export {
+  ClientMessage,
+  ErrorMessage,
+  EventMessage,
+  GapMessage,
+  HelloMessage,
+  PROTOCOL_VERSION,
+  projectName,
+  ServerMessage,
+  SessionInfo,
+  SessionsResponse,
+  SubscribeMessage,
+  SubscribeQuery,
+  Subscription,
+} from "./protocol.js";
 export { measureReduction, type ReductionReport } from "./reduction.js";
 export {
   createTranscriptParser,

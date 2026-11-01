@@ -45,6 +45,13 @@ no network beyond `127.0.0.1`. The event schema and filtering rules are in
 - Strict TS settings (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`)
   stay on. ESM everywhere. Use relative imports with a `.js` extension in core
   and daemon.
+- **The watcher only talks to an `EventSink`.** Delivery details (seqs, the
+  event log, subscriptions, HTTP) belong in the hub/server, so a remote team
+  server can replace the local hub without touching the watcher. The daemon's
+  behaviour and the WebSocket protocol are in [docs/daemon.md](docs/daemon.md);
+  wire schemas live in `packages/core/src/protocol.ts`.
+- The daemon binds `127.0.0.1` only and refuses non-local `Host`/`Origin`.
+  Don't loosen that in v0.
 - The parser must never throw on bad input. Skip unknown record types and
   malformed lines (the spec lists the dropped types). Empty or missing
   thinking is normal, not an error.
@@ -76,7 +83,13 @@ pnpm build       # tsc / vite build
 pnpm check       # lint + typecheck + test + build (what CI runs)
 pnpm report      # size-reduction report: raw transcript bytes vs. parser output
 pnpm coverage    # test coverage of packages/core/src
+pnpm baton start # run the built daemon (pnpm build first); --help for options
 ```
+
+Daemon integration tests (`packages/daemon/test/integration.test.ts`) run a
+real daemon on port 0 against a temp projects dir. They wait on conditions
+rather than fixed sleeps; keep it that way, since file events on Windows are
+bursty.
 
 **Run `pnpm check` before declaring a task done.** A task isn't done until it
 passes.

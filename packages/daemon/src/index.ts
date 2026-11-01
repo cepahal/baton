@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { BATON_EVENT_KINDS } from "@baton/core";
+import { main } from "./cli.js";
 
-// Placeholder: the watcher and localhost server land in later tasks.
-console.log(`baton daemon: not implemented yet (event kinds: ${BATON_EVENT_KINDS.join(", ")})`);
+await main(process.argv.slice(2));

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Watches Claude Code transcripts and serves BatonEvents on localhost. Owns all I/O.",
   "bin": {
-    "baton-daemon": "./dist/index.js"
+    "baton": "./dist/index.js"
   },
   "files": [
     "dist"
@@ -13,10 +13,18 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js start"
   },
   "dependencies": {
     "@baton/core": "workspace:*",
+    "@fastify/websocket": "^11.3.6",
+    "chokidar": "^5.0.0",
+    "fastify": "^5.12.7",
+    "pino": "^10.4.0",
     "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2",
+    "ws": "^8.22.1"
   }
 }

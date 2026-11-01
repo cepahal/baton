@@ -14,7 +14,8 @@
     "typecheck": "pnpm -r typecheck",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "report": "pnpm --filter @baton/core build && pnpm --filter @baton/core report",
-    "coverage": "vitest run --coverage --coverage.include=packages/core/src/**"
+    "coverage": "vitest run --coverage --coverage.include=packages/core/src/**",
+    "baton": "node packages/daemon/dist/index.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.4",
