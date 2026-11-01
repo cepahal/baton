@@ -23,7 +23,7 @@ describe("BatonEvent", () => {
   });
 
   it("rejects an unknown kind", () => {
-    expect(BatonEvent.safeParse({ ...valid, kind: "thinking" }).success).toBe(false);
+    expect(BatonEvent.safeParse({ ...valid, kind: "summary" }).success).toBe(false);
   });
 
   it("rejects a missing required field", () => {

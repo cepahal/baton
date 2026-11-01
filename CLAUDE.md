@@ -4,6 +4,12 @@ Baton streams live Claude Code sessions to teammates. It tails the JSONL
 transcripts Claude Code writes under `~/.claude/projects/`, turns each record
 into zero or more `BatonEvent`s, and pushes them to viewers.
 
+Two views of the same events: the **full-fidelity** stream teammates watch
+(prompts, replies, thinking, full tool output, injected system content, each
+labelled), and a **compact** view (`compactForLLM`) for handing a session off to
+another LLM session with fewer tokens. Don't trim the full stream to save
+tokens; that's what compaction is for.
+
 **v0 scope:** a localhost live feed — one daemon, one browser viewer, no auth,
 no network beyond `127.0.0.1`. The event schema and filtering rules are in
 [docs/spec.md](docs/spec.md); that document is the source of truth.
@@ -40,7 +46,8 @@ no network beyond `127.0.0.1`. The event schema and filtering rules are in
   stay on. ESM everywhere. Use relative imports with a `.js` extension in core
   and daemon.
 - The parser must never throw on bad input. Skip unknown record types and
-  malformed lines (the spec lists the dropped types).
+  malformed lines (the spec lists the dropped types). Empty or missing
+  thinking is normal, not an error.
 
 ## Test fixtures
 

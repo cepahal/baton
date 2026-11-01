@@ -8,9 +8,9 @@ this directory.
 
 | File | Session | What it exercises |
 |---|---|---|
-| `heavy-tools.jsonl` | Python backend work (YouTube matching module) | 38 `tool_use` / 38 `tool_result` (Bash, Edit, Read, Write), 18 thinking blocks, `queue-operation`, `cost-state`, `mode`, 44 attachments, IDE context tags in prompts |
+| `heavy-tools.jsonl` | Python backend work (YouTube matching module) | 38 `tool_use` / 38 `tool_result` (Bash, Edit, Read, Write), 18 thinking blocks (4 with text, the rest signature-only), an unclosed `<pasted_content>` cut by redaction, `queue-operation`, `cost-state`, `mode`, 44 attachments, IDE context tags in prompts |
 | `api-requests.jsonl` | Installing an npm tool + editing a shell profile | 20 `api-request`, 34 `api-request-blob`, 1 `api-request-shape`, `system`, `permission-mode`, `tools-used`, Bash + PowerShell + Edit tool calls |
-| `mixed.jsonl` | yt-dlp downloader module | Ordinary mix: 28 tool calls, pasted error logs, `edited_text_file` attachments, 2 `is_error` results, and a tool call whose result was cut off by the 200-line truncation |
+| `mixed.jsonl` | yt-dlp downloader module | Ordinary mix: 28 tool calls, a `<pasted_content>` prompt, 5 non-empty thinking blocks, pasted error logs, `edited_text_file` attachments, 2 `is_error` results, and a tool call whose result was cut off by the 200-line truncation |
 
 ## Redaction
 
