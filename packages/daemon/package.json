@@ -1,0 +1,22 @@
+{
+  "name": "@baton/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Watches Claude Code transcripts and serves BatonEvents on localhost. Owns all I/O.",
+  "bin": {
+    "baton-daemon": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@baton/core": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

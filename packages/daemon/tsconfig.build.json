@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node"],
+    // Resolve @baton/core to its built dist (not source) so core is not recompiled here.
+    "customConditions": []
+  },
+  "include": ["src"]
+}
