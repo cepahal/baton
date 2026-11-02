@@ -23,7 +23,9 @@ rm -f /data/replay.done
 ) &
 
 while true; do
-  baton start --server "$BATON_SERVER" --name "$NAME" \
+  # node directly, not the baton function: backgrounding a function forks a
+  # subshell, so $! would be that subshell and kill -9 would orphan the daemon.
+  node packages/daemon/dist/index.js start --server "$BATON_SERVER" --name "$NAME" \
     --projects-dir /data/projects --state-file /data/state.json \
     --log-level "${LOG_LEVEL:-info}" &
   echo $! > /data/daemon.pid

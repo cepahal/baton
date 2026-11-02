@@ -1,5 +1,5 @@
 import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { BatonEvent } from "@baton/core";
 import { type FSWatcher, watch } from "chokidar";
 import type { Logger } from "pino";
@@ -113,8 +113,15 @@ export class TranscriptWatcher {
         .on("error", (err) => this.#log.error({ err }, "file watcher error"))
         .on("ready", resolve);
     });
-    // Catch anything written between the initial read and the watcher being ready.
-    for (const tail of this.#tails.values()) this.#schedule(tail.path);
+    // Catch anything written between the initial read and the watcher being
+    // ready, including files created in that window: with ignoreInitial,
+    // chokidar never reports those as added, and if their directory appeared
+    // while chokidar was still scanning it may not be watching them either.
+    const known = [...this.#tails.values()].map((t) => t.path);
+    const now = await listTranscripts(projectsDir).catch(() => []);
+    const late = now.filter((path) => !this.#tails.has(fileKey(path)));
+    if (late.length > 0) this.#watcher?.add([...new Set(late.map((path) => dirname(path)))]);
+    for (const path of new Set([...known, ...now])) this.#schedule(path);
     this.#log.info({ projectsDir }, "watching for transcript changes");
   }
 

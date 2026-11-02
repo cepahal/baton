@@ -1,7 +1,9 @@
 // pnpm test:chaos — the multi-machine test, with faults injected mid-stream:
 //   - bob's daemon is killed with SIGKILL (its supervisor loop restarts it), and
-//   - alice's machine is cut off the network for 30 s.
-// Replays run slower here so both faults land while sessions are still live.
+//   - alice's machine is cut off the network for 30 s, and
+//   - carol's machine is paused for 30 s (a laptop lid closed: every process
+//     frozen, sockets left open but silent), then resumed.
+// Replays run slower here so the faults land while sessions are still live.
 // Afterwards it checks that no event was lost or duplicated.
 import { PROJECT } from "./fleet.mjs";
 import {
@@ -21,6 +23,7 @@ import {
 
 const KILL = "bob";
 const CUT = "alice";
+const SLEEP = "carol";
 const OUTAGE_MS = 30_000;
 const env = { BATON_TEST_SPEED: "2", BATON_TEST_MAX_GAP: "5" };
 
@@ -89,10 +92,40 @@ async function cutNetwork() {
   }
 }
 
+async function sleepMachine() {
+  const before = await waitForShare(SLEEP, 0.25);
+  log(`${SLEEP}: ${before}/${want(SLEEP)} events in; pausing the machine for 30s (lid closed)`);
+  await compose(["pause", SLEEP], { quiet: true });
+  const start = Date.now();
+  try {
+    await sleep(5000);
+    const frozen = await have(SLEEP);
+    await sleep(OUTAGE_MS - (Date.now() - start));
+    const during = await have(SLEEP);
+    if (during !== frozen) {
+      throw new Error(`${SLEEP} kept delivering while paused (${frozen} → ${during})`);
+    }
+  } finally {
+    await compose(["unpause", SLEEP], { quiet: true, allowFail: true });
+  }
+  const at = await have(SLEEP);
+  log(`${SLEEP}: woke after ${Math.round((Date.now() - start) / 1000)}s at ${at} events`);
+  for (;;) {
+    await sleep(500);
+    const n = await have(SLEEP);
+    if (n > at || n >= want(SLEEP)) {
+      log(`${SLEEP}: delivering again (${n} events)`);
+      return;
+    }
+  }
+}
+
 const code = await withStack({ env, keep: keepFlag }, async () => {
   await waitForServer();
-  log(`server up; faults: kill ${KILL}'s daemon, cut ${CUT} off for ${OUTAGE_MS / 1000}s`);
-  await Promise.all([killDaemon(), cutNetwork()]);
+  log(
+    `server up; faults: kill ${KILL}'s daemon, cut ${CUT} off and put ${SLEEP} to sleep for ${OUTAGE_MS / 1000}s`,
+  );
+  await Promise.all([killDaemon(), cutNetwork(), sleepMachine()]);
   log("faults over; waiting for every session to finish");
   await waitForAll(expected, { timeoutMs: 300_000 });
   await sleep(3000);

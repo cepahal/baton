@@ -113,7 +113,11 @@ own projects dir while `baton start --server` forwards it
 - `pnpm test:chaos`: the same, with replays slowed so faults land mid-stream.
   It `kill -9`s bob's daemon (it restarts and resends) and disconnects alice's
   container from the network for 30 s (her events queue on disk; the test
-  checks none arrive during the outage), then runs the same checks.
+  checks none arrive during the outage), and `docker compose pause`s carol's
+  container for 30 s, like a laptop with its lid closed: replay and daemon
+  freeze, and her socket stays open but silent until she wakes. Then it runs
+  the same checks. (`docker compose stop` isn't used: restarting a machine
+  restarts its replay from the top, which a real session wouldn't do.)
 - Both take `--keep` to leave the stack running, e.g. to open the viewer at
   `http://127.0.0.1:17777/?token=baton-multi-machine-test-token`. Env:
   `BATON_TEST_PORT`, `BATON_TOKEN`, `BATON_TEST_SPEED`, `BATON_TEST_MAX_GAP`.
