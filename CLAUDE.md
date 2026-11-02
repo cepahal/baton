@@ -14,6 +14,10 @@ tokens; that's what compaction is for.
 no network beyond `127.0.0.1`. The event schema and filtering rules are in
 [docs/spec.md](docs/spec.md); that document is the source of truth.
 
+**Team mode** (`baton serve`, `baton start --server`) is the one exception to
+localhost-only: a token-protected team server that daemons forward to. It's
+described in [docs/team.md](docs/team.md).
+
 ## Layout and package boundaries
 
 | Package                             | Role                                                | May do                                                       | Must not do                                                                             |
@@ -50,8 +54,9 @@ no network beyond `127.0.0.1`. The event schema and filtering rules are in
   server can replace the local hub without touching the watcher. The daemon's
   behaviour and the WebSocket protocol are in [docs/daemon.md](docs/daemon.md);
   wire schemas live in `packages/core/src/protocol.ts`.
-- The daemon binds `127.0.0.1` only and refuses non-local `Host`/`Origin`.
-  Don't loosen that in v0.
+- `baton start` binds `127.0.0.1` only and refuses non-local `Host`/`Origin`.
+  Don't loosen that in v0. Only `baton serve` listens beyond localhost, and
+  every route there but `/health` and `/login` requires the team token.
 - The parser must never throw on bad input. Skip unknown record types and
   malformed lines (the spec lists the dropped types). Empty or missing
   thinking is normal, not an error.
@@ -84,6 +89,8 @@ pnpm check       # lint + typecheck + test + build (what CI runs)
 pnpm report      # size-reduction report: raw transcript bytes vs. parser output
 pnpm coverage    # test coverage of packages/core/src
 pnpm baton start # run the built daemon (pnpm build first); --help for options
+pnpm test:multi  # Docker: 1 team server + 6 replaying daemons, checks exactly-once delivery
+pnpm test:chaos  # same, killing one daemon and cutting another off the network for 30s
 ```
 
 Daemon integration tests (`packages/daemon/test/integration.test.ts`) run a

@@ -1,25 +1,25 @@
 /* Baton viewer. Soft clay surfaces (puffy, pastel, inner highlights) with
-   glossy Frutiger-style aqua accents: sky gradient, glass orbs, bubble lights. */
+   glossy Frutiger-style orange accents: warm sky, glass orbs, tactile edges. */
 
 :root {
-  --bg-top: #e9f4fb;
-  --bg-bottom: #eef1f7;
-  --clay: #f6f8fc;
-  --clay-2: #eef2f8;
+  --bg-top: #fff4e8;
+  --bg-bottom: #f7efe6;
+  --clay: #fffaf4;
+  --clay-2: #fbf2e8;
   --ink: #26324a;
   --ink-soft: #5d6a82;
   --ink-faint: #8a95aa;
   --line: rgba(38, 50, 74, 0.08);
 
-  --aqua: #2bb3d9;
-  --aqua-deep: #1386b5;
+  --aqua: #ff8a2b;
+  --aqua-deep: #d9620a;
   --leaf: #4cc77a;
   --leaf-deep: #2a9d55;
   --sun: #f3b33d;
   --coral: #e9677a;
 
-  --prompt: #dff0ff;
-  --prompt-edge: #9fd0f4;
+  --prompt: #ffe9d4;
+  --prompt-edge: #ffc08a;
   --reply: #ffffff;
   --thinking: #f0ecfb;
   --tool: #eef3f2;
@@ -32,13 +32,13 @@
   --radius-sm: 10px;
 
   --clay-shadow:
-    8px 8px 18px rgba(150, 168, 196, 0.35), -6px -6px 14px rgba(255, 255, 255, 0.9),
-    inset 2px 2px 3px rgba(255, 255, 255, 0.85), inset -2px -3px 5px rgba(150, 168, 196, 0.18);
+    8px 8px 18px rgba(196, 160, 128, 0.35), -6px -6px 14px rgba(255, 255, 255, 0.9),
+    inset 2px 2px 3px rgba(255, 255, 255, 0.85), inset -2px -3px 5px rgba(196, 160, 128, 0.18);
   --clay-shadow-sm:
-    4px 4px 10px rgba(150, 168, 196, 0.28), -3px -3px 8px rgba(255, 255, 255, 0.85),
-    inset 1px 1px 2px rgba(255, 255, 255, 0.8), inset -1px -2px 3px rgba(150, 168, 196, 0.15);
+    4px 4px 10px rgba(196, 160, 128, 0.28), -3px -3px 8px rgba(255, 255, 255, 0.85),
+    inset 1px 1px 2px rgba(255, 255, 255, 0.8), inset -1px -2px 3px rgba(196, 160, 128, 0.15);
   --clay-pressed:
-    inset 3px 3px 7px rgba(150, 168, 196, 0.35), inset -3px -3px 7px rgba(255, 255, 255, 0.9);
+    inset 3px 3px 7px rgba(196, 160, 128, 0.35), inset -3px -3px 7px rgba(255, 255, 255, 0.9);
   --gloss: linear-gradient(180deg, rgba(255, 255, 255, 0.75) 0%, rgba(255, 255, 255, 0) 55%);
 
   --font: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
@@ -64,7 +64,7 @@ body,
 
 body {
   background:
-    radial-gradient(1200px 500px at 85% -10%, rgba(43, 179, 217, 0.18), transparent 60%),
+    radial-gradient(1200px 500px at 85% -10%, rgba(255, 138, 43, 0.22), transparent 60%),
     radial-gradient(900px 400px at -10% 110%, rgba(76, 199, 122, 0.14), transparent 60%),
     linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
 }
@@ -89,13 +89,182 @@ button {
   padding: 18px;
 }
 
-.columns {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  gap: 18px;
+.app.has-panel {
+  grid-template-columns: 290px minmax(0, 1fr) minmax(420px, 46vw);
+}
+
+/* ---- board ----------------------------------------------------------------- */
+
+.board {
   min-width: 0;
   min-height: 0;
+  position: relative;
+  overflow: auto;
+  border-radius: var(--radius-lg);
+  background-color: var(--clay-2);
+  background-image:
+    linear-gradient(rgba(255, 138, 43, 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 138, 43, 0.14) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-attachment: local;
+  box-shadow: var(--clay-pressed);
+  transition: box-shadow 0.15s ease;
+}
+
+.board.is-over {
+  box-shadow:
+    var(--clay-pressed),
+    inset 0 0 0 3px var(--aqua);
+}
+
+.board-canvas {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.card-slot {
+  position: absolute;
+  cursor: grab;
+  transition:
+    left 0.15s ease,
+    top 0.15s ease;
+}
+
+.card-slot:active {
+  cursor: grabbing;
+}
+
+.card-slot.is-dragging {
+  opacity: 0.4;
+}
+
+.card {
+  position: relative;
+  height: 100%;
+  border-radius: var(--radius-lg);
+  background: var(--gloss), var(--clay);
+  box-shadow: var(--clay-shadow);
+  border: 2px solid rgba(255, 138, 43, 0.25);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 138, 43, 0.55);
+}
+
+.card.is-open {
+  border-color: var(--aqua);
+  box-shadow:
+    var(--clay-shadow),
+    0 0 0 4px rgba(255, 138, 43, 0.18);
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  padding: 16px 14px 12px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 30px;
+}
+
+.card-name {
+  font-weight: 700;
+  font-size: 15px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.card-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 3px 10px 3px 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--aqua-deep);
+  border-radius: 999px;
+  background: #ffeedd;
+  box-shadow: var(--clay-shadow-sm);
+}
+
+.card-owner-orb {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 11px;
+  color: #fff;
+  background: var(--gloss), linear-gradient(180deg, #ffab5e, var(--aqua-deep));
+}
+
+.card-summary {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.card-label {
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--aqua-deep);
+}
+
+.card-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.card-text.is-faint {
+  color: var(--ink-faint);
+}
+
+.card-foot {
+  font-size: 11px;
+  color: var(--ink-faint);
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.session[draggable="true"] {
+  cursor: grab;
 }
 
 .placeholder {
@@ -145,7 +314,7 @@ button {
   border-radius: 50%;
   background:
     radial-gradient(circle at 50% 120%, var(--leaf) 0%, transparent 60%),
-    radial-gradient(circle at 30% 30%, #8ee6ff 0%, var(--aqua) 45%, var(--aqua-deep) 100%);
+    radial-gradient(circle at 30% 30%, #ffd09e 0%, var(--aqua) 45%, var(--aqua-deep) 100%);
   box-shadow:
     0 4px 10px rgba(19, 134, 181, 0.35),
     inset 0 -2px 4px rgba(0, 60, 90, 0.25);
@@ -195,6 +364,30 @@ button {
   color: var(--coral);
 }
 
+.session-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.session-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 4px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.session-group-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .session-list {
   display: flex;
   flex-direction: column;
@@ -202,7 +395,6 @@ button {
   margin: 0;
   padding: 4px 4px 10px;
   list-style: none;
-  overflow-y: auto;
 }
 
 .session {
@@ -363,7 +555,7 @@ button {
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
-  background: linear-gradient(180deg, #ffffff 0%, #eaf6fb 100%);
+  background: linear-gradient(180deg, #ffffff 0%, #fff0e0 100%);
   border-bottom: 1px solid var(--line);
 }
 
@@ -456,7 +648,7 @@ button {
   padding: 8px 16px;
   border: 0;
   border-radius: 999px;
-  background: var(--gloss), linear-gradient(180deg, #5fd0ee, var(--aqua-deep));
+  background: var(--gloss), linear-gradient(180deg, #ffab5e, var(--aqua-deep));
   box-shadow:
     0 6px 16px rgba(19, 134, 181, 0.35),
     inset 0 -2px 4px rgba(0, 50, 80, 0.25);
@@ -795,11 +987,12 @@ button.tool-main {
 }
 
 @media (max-width: 900px) {
-  .app {
+  .app,
+  .app.has-panel {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
   }
-  .session-list {
+  .session-groups {
     max-height: 30vh;
   }
 }
@@ -808,4 +1001,14 @@ button.tool-main {
   .live-dot.is-live {
     animation: none;
   }
+}
+
+.board > .placeholder {
+  position: absolute;
+  inset: 18px;
+  background: rgba(255, 250, 244, 0.7);
+}
+
+.panel > .column {
+  flex: 1;
 }

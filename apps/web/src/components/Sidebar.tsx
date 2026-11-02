@@ -1,5 +1,7 @@
 import type { SessionInfo } from "@baton/core";
 import type { ConnectionState } from "../lib/connection.js";
+import { SESSION_DRAG_TYPE } from "../lib/drag.js";
+import { groupBySource } from "../lib/session-groups.js";
 import { formatAgo, isLive } from "../lib/time.js";
 import { ConnectionBadge } from "./ConnectionBadge.js";
 import { LiveDot } from "./LiveDot.js";
@@ -35,32 +37,53 @@ export function Sidebar(props: Props) {
           No sessions yet. Start Claude Code anywhere and it shows up here.
         </p>
       )}
-      <ul className="session-list">
-        {sessions.map((s) => {
-          const isSelected = selected.includes(s.sessionId);
-          const last = Date.parse(s.lastActivity);
-          return (
-            <li key={s.sessionId}>
-              <button
-                type="button"
-                className={`session${isSelected ? " is-selected" : ""}`}
-                aria-pressed={isSelected}
-                disabled={!isSelected && full}
-                title={full && !isSelected ? `Up to ${maxSelected} columns` : s.projectPath}
-                onClick={() => props.onToggle(s.sessionId)}
-              >
-                <LiveDot live={isLive(s.lastActivity, now)} />
-                <span className="session-text">
-                  <span className="session-name">{s.projectName}</span>
-                  <span className="session-meta">
-                    {formatAgo(last, now)} · {s.events} events · {s.sessionId.slice(0, 6)}
-                  </span>
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="session-groups">
+        {groupBySource(sessions).map((group) => (
+          <section
+            key={group.source ?? ""}
+            className="session-group"
+            aria-label={group.source ?? "Sessions"}
+          >
+            {group.source !== undefined && (
+              <h3 className="session-group-heading">
+                <span className="session-group-name">{group.source}</span>
+                <span className="count">{group.sessions.length}</span>
+              </h3>
+            )}
+            <ul className="session-list">
+              {group.sessions.map((s) => {
+                const isSelected = selected.includes(s.sessionId);
+                const last = Date.parse(s.lastActivity);
+                return (
+                  <li key={s.sessionId}>
+                    <button
+                      type="button"
+                      className={`session${isSelected ? " is-selected" : ""}`}
+                      aria-pressed={isSelected}
+                      disabled={!isSelected && full}
+                      title={full && !isSelected ? `Up to ${maxSelected} cards` : s.projectPath}
+                      draggable={isSelected || !full}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(SESSION_DRAG_TYPE, s.sessionId);
+                        e.dataTransfer.effectAllowed = "copy";
+                      }}
+                      onClick={() => props.onToggle(s.sessionId)}
+                    >
+                      <LiveDot live={isLive(s.lastActivity, now)} />
+                      <span className="session-text">
+                        <span className="session-name">{s.projectName}</span>
+                        <span className="session-meta">
+                          {formatAgo(last, now)} · {s.events} events · {s.sessionId.slice(0, 6)}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
     </aside>
   );
 }

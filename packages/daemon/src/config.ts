@@ -1,6 +1,7 @@
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { homedir, userInfo } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DaemonName } from "@baton/core";
 import { z } from "zod";
 
 export const DEFAULT_PORT = 7777;
@@ -8,6 +9,12 @@ export const DEFAULT_PORT = 7777;
 export const DEFAULT_BUFFER_MB = 256;
 /** The daemon never listens on anything but loopback. */
 export const HOST = "127.0.0.1";
+/** `baton serve` listens on every interface: teammates connect from other machines. */
+export const TEAM_HOST = "0.0.0.0";
+/** Disk budget for events waiting to reach a team server. */
+export const DEFAULT_QUEUE_MB = 64;
+/** Shortest team token `baton serve` accepts. */
+export const MIN_TOKEN_LENGTH = 16;
 
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 
@@ -30,8 +37,50 @@ export const DaemonConfig = z.object({
   logLevel: z.enum(LOG_LEVELS),
   /** Built viewer (`apps/web/dist`) served at `/`. */
   webDir: z.string().min(1),
+  /** Send events to a team server instead of serving them locally. */
+  remote: z
+    .object({
+      server: z.url({ protocol: /^(wss?|https?)$/ }),
+      token: z.string().min(1),
+      name: DaemonName,
+      /** Directory of the on-disk send queue. */
+      queueDir: z.string().min(1),
+      queueMb: int(1),
+    })
+    .optional(),
 });
 export type DaemonConfig = z.infer<typeof DaemonConfig>;
+export type RemoteConfig = NonNullable<DaemonConfig["remote"]>;
+
+/** `baton serve` settings after defaults are applied. */
+export const ServeConfig = z.object({
+  host: z.string().min(1),
+  port: int(0).max(65535),
+  token: z
+    .string()
+    .min(MIN_TOKEN_LENGTH, `BATON_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters`),
+  bufferMb: int(1),
+  bufferSize: int(1).optional(),
+  activeMinutes: int(1),
+  logLevel: z.enum(LOG_LEVELS),
+  webDir: z.string().min(1),
+});
+export type ServeConfig = z.infer<typeof ServeConfig>;
+
+/** A display name from the OS username, reduced to the characters a name allows. */
+export function defaultDaemonName(): string {
+  let name = "";
+  try {
+    name = userInfo().username;
+  } catch {
+    // no passwd entry, e.g. an arbitrary container uid
+  }
+  const clean = name
+    .replace(/[^p{L}p{N} ._@-]/gu, "-")
+    .slice(0, 64)
+    .trim();
+  return clean === "" ? "baton" : clean;
+}
 
 /** `apps/web/dist` in this repo; the same depth from `src/` and `dist/`. */
 export const defaultWebDir = () =>
@@ -49,11 +98,16 @@ export function defaultStateFile(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** Fills in defaults and validates. Throws a ZodError on bad values. */
-export function resolveConfig(input: Partial<Record<keyof DaemonConfig, unknown>>): DaemonConfig {
+export function resolveConfig(
+  input: Partial<Record<Exclude<keyof DaemonConfig, "remote">, unknown>> & {
+    remote?: Partial<Record<keyof RemoteConfig, unknown>> | undefined;
+  },
+): DaemonConfig {
+  const stateFile = input.stateFile ?? defaultStateFile();
   const config = DaemonConfig.parse({
     port: input.port ?? DEFAULT_PORT,
     projectsDir: input.projectsDir ?? defaultProjectsDir(),
-    stateFile: input.stateFile ?? defaultStateFile(),
+    stateFile,
     backlog: input.backlog ?? "all",
     bufferMb: input.bufferMb ?? DEFAULT_BUFFER_MB,
     bufferSize: input.bufferSize,
@@ -61,11 +115,40 @@ export function resolveConfig(input: Partial<Record<keyof DaemonConfig, unknown>
     poll: input.poll ?? false,
     logLevel: input.logLevel ?? "info",
     webDir: input.webDir ?? defaultWebDir(),
+    remote: input.remote && {
+      server: input.remote.server,
+      token: input.remote.token,
+      name: input.remote.name ?? defaultDaemonName(),
+      queueDir:
+        input.remote.queueDir ??
+        (typeof stateFile === "string" ? join(dirname(stateFile), "queue") : undefined),
+      queueMb: input.remote.queueMb ?? DEFAULT_QUEUE_MB,
+    },
   });
   return {
     ...config,
     projectsDir: resolve(config.projectsDir),
     stateFile: resolve(config.stateFile),
     webDir: resolve(config.webDir),
+    ...(config.remote
+      ? { remote: { ...config.remote, queueDir: resolve(config.remote.queueDir) } }
+      : {}),
   };
+}
+
+/** Fills in `baton serve` defaults and validates. Throws a ZodError on bad values. */
+export function resolveServeConfig(
+  input: Partial<Record<keyof ServeConfig, unknown>>,
+): ServeConfig {
+  const config = ServeConfig.parse({
+    host: input.host ?? TEAM_HOST,
+    port: input.port ?? DEFAULT_PORT,
+    token: input.token,
+    bufferMb: input.bufferMb ?? DEFAULT_BUFFER_MB,
+    bufferSize: input.bufferSize,
+    activeMinutes: input.activeMinutes ?? 24 * 60,
+    logLevel: input.logLevel ?? "info",
+    webDir: input.webDir ?? defaultWebDir(),
+  });
+  return { ...config, webDir: resolve(config.webDir) };
 }

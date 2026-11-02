@@ -75,7 +75,7 @@ export async function startDaemon(config: DaemonConfig, logger: Logger): Promise
 }
 
 /** `dir` if it holds a built viewer, otherwise undefined (with a warning). */
-async function viewerDir(dir: string, logger: Logger): Promise<string | undefined> {
+export async function viewerDir(dir: string, logger: Logger): Promise<string | undefined> {
   try {
     if ((await stat(join(dir, "index.html"))).isFile()) return dir;
   } catch {

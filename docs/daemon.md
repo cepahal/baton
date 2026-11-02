@@ -14,12 +14,15 @@ npx wscat -c ws://127.0.0.1:7777/ws
 `--buffer-mb`, `--buffer-size`, `--active-minutes`, `--poll`, `--log-level`,
 `--web-dir`. Logs are pino JSON on stdout.
 
+With `--server`, the daemon forwards to a team server instead of serving
+locally. That mode, `baton serve` and `baton replay` are in [team.md](team.md).
+
 ## Pieces
 
 ```
-TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local) ──▶ Fastify /ws, /sessions
-   │  TranscriptTail per file                       (a remote/team server can implement
-   │  LineBuffer, @baton/core parser                 EventSink later; the watcher won't change)
+TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local) ──▶ Fastify /ws, /sessions, /events
+   │  TranscriptTail per file                       ◀── RemoteSink (--server, see team.md)
+   │  LineBuffer, @baton/core parser
    └─ StateStore (offsets on disk)
 ```
 
@@ -36,7 +39,11 @@ TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local)
   `seq` and `epoch`. `MemoryEventLog` (the default) keeps them in memory up to a
   byte budget.
 - `src/hub.ts`: subscriptions, replay with backpressure, `/sessions` data.
-- `src/server.ts`: HTTP/WebSocket routes and the local-only request check.
+- `src/server.ts`: HTTP/WebSocket routes and the local-only request check
+  (or, for `baton serve`, the team token check and `/ingest`).
+- `src/merge.ts`: `mergeByTime`, which interleaves sessions by timestamp for
+  start-up publishing without reordering any one session (transcript
+  timestamps can go backwards).
 
 ## Watching
 
@@ -123,6 +130,8 @@ code 1013. An invalid query closes it with 1008.
   within `--active-minutes`, newest `lastActivity` (transcript `ts`) first.
   `events` counts what the hub received since it started, backlog included.
 - `GET /health` → `{ ok, epoch, seq }`.
+- `GET /events?after=<seq>&limit=<n>` → the hub's log in order (see
+  [team.md](team.md#get-events)).
 - `GET /` and other paths: the built viewer from `--web-dir` (default
   `apps/web/dist`, found relative to the daemon's own files, so it only works
   when the daemon runs from this repo). If that directory has no `index.html`,

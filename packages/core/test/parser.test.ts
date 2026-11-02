@@ -238,13 +238,17 @@ describe.each(FIXTURES)("fixture %s", (name) => {
 
   it("covers prompts, replies, and tool calls with results", () => {
     const seen = new Set(events.map((e) => e.kind));
-    for (const k of ["prompt", "reply", "thinking", "tool_call", "tool_result"])
-      expect(seen).toContain(k);
+    for (const k of ["prompt", "reply", "tool_call", "tool_result"]) expect(seen).toContain(k);
     const callIds = new Set(
       events.filter((e) => e.kind === "tool_call").map((e) => e.meta?.toolUseId),
     );
     for (const r of events.filter((e) => e.kind === "tool_result"))
       expect(callIds).toContain(r.meta?.toolUseId);
+  });
+
+  it("emits thinking exactly when the transcript has non-empty thinking", () => {
+    const hasText = /"type":"thinking","thinking":"[^"]/.test(readFixture(name));
+    expect(events.some((e) => e.kind === "thinking")).toBe(hasText);
   });
 
   it("never leaks injected tags into prompts", () => {

@@ -35,7 +35,14 @@ export const toolResult = (id: string, content: unknown, isError = false) =>
 export const jsonl = (...lines: string[]) => lines.join("\n");
 
 /** The redacted real transcripts in test/fixtures. */
-export const FIXTURES = ["heavy-tools", "api-requests", "mixed"] as const;
+export const FIXTURES = [
+  "heavy-tools",
+  "api-requests",
+  "mixed",
+  "code-review",
+  "install-debug",
+  "long-build",
+] as const;
 
 export const fixturePath = (name: string) => join(import.meta.dirname, "fixtures", `${name}.jsonl`);
 export const readFixture = (name: string) => readFileSync(fixturePath(name), "utf8");

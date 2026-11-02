@@ -1,6 +1,8 @@
 import {
   type BatonEvent,
   ClientMessage,
+  type EventMessage,
+  type EventsResponse,
   PROTOCOL_VERSION,
   projectName,
   type ServerMessage,
@@ -56,6 +58,8 @@ type SessionState = {
   /** When the hub last received an event for it (hub clock, so transcript clock skew doesn't matter). */
   seenMs: number;
   events: number;
+  /** Daemon the session streams from, on a team server. */
+  source?: string;
 };
 
 /** Close code for a client that can't keep up (RFC 6455 "try again later"). */
@@ -99,10 +103,20 @@ export class Hub implements EventSink {
   }
 
   publish(events: readonly BatonEvent[], options: PublishOptions = {}): void {
+    this.accept(events, options);
+  }
+
+  /**
+   * Numbers, stores and fans out events. Returns how many were new: an event
+   * whose id the log already holds is skipped, so a daemon may resend freely.
+   */
+  accept(events: readonly BatonEvent[], options: PublishOptions = {}): number {
+    let accepted = 0;
     for (const event of events) {
       const entry = this.#log.append(event, options.backlog ?? false);
       if (!entry) continue; // already held, e.g. history published again
-      this.#track(event);
+      accepted++;
+      this.#track(event, options.source);
       let data: string | undefined;
       for (const client of this.#clients) {
         if (!client.live || !matches(client.session, event)) continue;
@@ -110,6 +124,17 @@ export class Hub implements EventSink {
         this.#sendLive(client, data);
       }
     }
+    return accepted;
+  }
+
+  /** Log entries after `after`, oldest first, for `GET /events`. */
+  entries(after: number, limit: number): EventsResponse {
+    return {
+      epoch: this.#log.epoch,
+      firstSeq: this.#log.firstSeq,
+      lastSeq: this.#log.lastSeq,
+      events: this.#log.read(after, limit).map(eventMessage),
+    };
   }
 
   /** Registers a client, greets it, and starts replaying what it asked for. */
@@ -158,6 +183,7 @@ export class Hub implements EventSink {
         projectName: projectName(s.projectPath),
         lastActivity: s.lastActivity,
         events: s.events,
+        ...(s.source === undefined ? {} : { source: s.source }),
       }));
   }
 
@@ -233,7 +259,7 @@ export class Hub implements EventSink {
     return current();
   }
 
-  #track(event: BatonEvent): void {
+  #track(event: BatonEvent, source: string | undefined): void {
     const ms = Date.parse(event.ts);
     const seenMs = this.#now();
     const s = this.#sessions.get(event.sessionId);
@@ -244,10 +270,12 @@ export class Hub implements EventSink {
         lastMs: ms,
         seenMs,
         events: 1,
+        ...(source === undefined ? {} : { source }),
       });
       return;
     }
     s.events++;
+    if (source !== undefined) s.source = source;
     s.seenMs = seenMs;
     if (event.projectPath) s.projectPath = event.projectPath;
     if (ms >= s.lastMs) {
@@ -278,7 +306,7 @@ export class Hub implements EventSink {
 const matches = (session: Subscription, event: BatonEvent) =>
   session === "all" || session === event.sessionId;
 
-const eventMessage = (entry: LogEntry): ServerMessage => ({
+const eventMessage = (entry: LogEntry): EventMessage => ({
   type: "event",
   seq: entry.seq,
   ...(entry.backlog ? { backlog: true } : {}),

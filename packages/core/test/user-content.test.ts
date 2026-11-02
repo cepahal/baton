@@ -51,6 +51,22 @@ describe("segmentUserText", () => {
     ]);
   });
 
+  it("labels an injected tag cut off before its closing tag as system", () => {
+    // From code-review.jsonl: a long <task-notification> truncated mid-result.
+    const text = "<task-notification>\n<task-id>a1</task-id>\n<result>The review found…[truncated]";
+    expect(labels(text)).toEqual([
+      [
+        "system",
+        "task-notification",
+        "<task-id>a1</task-id>\n<result>The review found…[truncated]",
+      ],
+    ]);
+    // Typed text before an unclosed tag stays a prompt.
+    expect(labels("hi <system-reminder>cut")).toEqual([
+      ["prompt", "typed", "hi <system-reminder>cut"],
+    ]);
+  });
+
   it("drops empty injected tags", () => {
     expect(labels("<system-reminder>  </system-reminder>hi")).toEqual([["prompt", "typed", "hi"]]);
   });

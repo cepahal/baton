@@ -26,7 +26,7 @@ export function FeedColumn({ store, sessionId, info, live, onClose }: Props) {
             {sessionId.slice(0, 8)} · {events.length} events
           </span>
         </div>
-        <button type="button" className="icon-btn" aria-label="Close column" onClick={onClose}>
+        <button type="button" className="icon-btn" aria-label="Close panel" onClick={onClose}>
           ✕
         </button>
       </header>

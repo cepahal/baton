@@ -15,7 +15,10 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "report": "pnpm --filter @baton/core build && pnpm --filter @baton/core report",
     "coverage": "vitest run --coverage --coverage.include=packages/core/src/**",
-    "baton": "node packages/daemon/dist/index.js"
+    "baton": "node packages/daemon/dist/index.js",
+    "test:multi": "pnpm --filter @baton/core build && node scripts/multi/test.mjs",
+    "test:chaos": "pnpm --filter @baton/core build && node scripts/multi/chaos.mjs",
+    "demo": "pnpm build && node scripts/multi/local.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.4",

@@ -72,7 +72,9 @@ The rules, applied to each `text` block (or string `content`) of a user record:
 
    Anything inside `<pasted_content>` stays verbatim, even if it looks like an
    injected tag. A `<pasted_content>` opener with no closing tag (e.g. a truncated
-   record) runs to the end of the text.
+   record) runs to the end of the text. So does an injected tag that opens where
+   typed text would start and never closes (a long `<task-notification>` cut by
+   truncation): it is a `system` piece, not a prompt.
 3. All `prompt` pieces of one record merge into **one** `prompt` event, placed
    where its first non-empty piece was. Each `system` piece is its own event.
    Empty pieces emit nothing.
@@ -259,11 +261,14 @@ as UTF-8 bytes of `compactForLLM` output written as JSONL vs. the raw JSONL.
 `measureReduction(raw)` in core computes it. A test enforces it on every fixture,
 and `pnpm report` prints it:
 
-| Fixture      | Raw      | Full view | Handoff | Reduction |
-| ------------ | -------- | --------- | ------- | --------- |
-| api-requests | 410.9 KB | 48.8 KB   | 22.9 KB | 94.4%     |
-| heavy-tools  | 405.5 KB | 80.0 KB   | 33.1 KB | 91.8%     |
-| mixed        | 388.6 KB | 75.7 KB   | 29.3 KB | 92.5%     |
+| Fixture       | Raw      | Full view | Handoff | Reduction |
+| ------------- | -------- | --------- | ------- | --------- |
+| api-requests  | 410.9 KB | 48.8 KB   | 22.9 KB | 94.4%     |
+| code-review   | 485.0 KB | 50.4 KB   | 18.0 KB | 96.3%     |
+| heavy-tools   | 405.5 KB | 80.0 KB   | 33.1 KB | 91.8%     |
+| install-debug | 357.7 KB | 41.3 KB   | 16.7 KB | 95.3%     |
+| long-build    | 476.4 KB | 56.4 KB   | 19.0 KB | 96.0%     |
+| mixed         | 388.6 KB | 75.7 KB   | 29.3 KB | 92.5%     |
 
 ## Decided
 

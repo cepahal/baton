@@ -1,7 +1,8 @@
 # Transcript fixtures
 
 Real Claude Code transcripts (`~/.claude/projects/<slug>/<sessionId>.jsonl`),
-cut to their first 200 records and redacted. Lines are untouched apart from
+cut to their first 200 records and redacted. `baton replay` and the multi-machine
+test (`pnpm test:multi`) replay these six as simulated live sessions. Lines are untouched apart from
 redaction, so they keep the real record types, field order quirks, and
 streamed-assistant structure the parser has to handle. Biome is told to ignore
 this directory.
@@ -11,6 +12,9 @@ this directory.
 | `heavy-tools.jsonl` | Python backend work (YouTube matching module) | 38 `tool_use` / 38 `tool_result` (Bash, Edit, Read, Write), 18 thinking blocks (4 with text, the rest signature-only), an unclosed `<pasted_content>` cut by redaction, `queue-operation`, `cost-state`, `mode`, 44 attachments, IDE context tags in prompts |
 | `api-requests.jsonl` | Installing an npm tool + editing a shell profile | 20 `api-request`, 34 `api-request-blob`, 1 `api-request-shape`, `system`, `permission-mode`, `tools-used`, Bash + PowerShell + Edit tool calls |
 | `mixed.jsonl` | yt-dlp downloader module | Ordinary mix: 28 tool calls, a `<pasted_content>` prompt, 5 non-empty thinking blocks, pasted error logs, `edited_text_file` attachments, 2 `is_error` results, and a tool call whose result was cut off by the 200-line truncation |
+| `code-review.jsonl` | A `/code-review` run on this repo | Slash command with `local-command-caveat`, a long `<task-notification>` cut open by the 2,000-char truncation, 33 Bash calls, 25 signature-only thinking blocks (so no thinking events), 18 `api-request` |
+| `install-debug.jsonl` | Debugging a failed tool install on Windows (137 records, the whole session) | PowerShell + Bash calls, 4 non-empty thinking blocks, `cost-state`, `queue-operation`, a 32-minute span with long pauses |
+| `long-build.jsonl` | Building this repo's viewer (first 200 records) | Write/Edit/Read/Bash calls, 2 `is_error` results, `file-history-delta`, signature-only thinking |
 
 ## Redaction
 

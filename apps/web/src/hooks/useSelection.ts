@@ -17,6 +17,7 @@ export function useSelection(max: number) {
   return {
     selected,
     toggle: selection.toggle,
+    add: selection.add,
     remove: selection.remove,
     initialize: selection.initialize,
   };

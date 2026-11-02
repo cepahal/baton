@@ -42,6 +42,11 @@ export class Selection {
     else if (s.length < this.#max) this.#set([...s, id]);
   };
 
+  /** Adds a session if there's room; a no-op if it's already there. */
+  add = (id: string): void => {
+    if (!this.#ids.includes(id) && this.#ids.length < this.#max) this.#set([...this.#ids, id]);
+  };
+
   remove = (id: string): void => {
     if (this.#ids.includes(id)) this.#set(this.#ids.filter((x) => x !== id));
   };

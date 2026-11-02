@@ -87,6 +87,9 @@ importers:
       pino:
         specifier: ^10.4.0
         version: 10.4.0
+      ws:
+        specifier: ^8.22.1
+        version: 8.22.1
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -94,9 +97,6 @@ importers:
       '@types/ws':
         specifier: ^8.18.2
         version: 8.18.2
-      ws:
-        specifier: ^8.22.1
-        version: 8.22.1
 
 packages:
 

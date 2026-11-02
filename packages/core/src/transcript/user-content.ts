@@ -53,12 +53,16 @@ function findUnclosedPaste(text: string): { start: number; inner: string } | und
   return PASTE_CLOSE_RE.test(inner) ? undefined : { start: opener.index, inner };
 }
 
+/** Text that opens with an injected tag that never closes (a record cut short). */
+const UNCLOSED_INJECTED_RE = new RegExp(`^\\s*<(${INJECTED_TAGS.join("|")})\\b[^>]*>([\\s\\S]*)$`);
+
 const INTERRUPT_RE = /^\[Request interrupted by user[^\]]*\]$/;
 
 /**
  * Splits user text into labelled segments, in order. Text inside
  * `<pasted_content>` is kept verbatim, even if it contains injected-looking tags.
- * An unclosed `<pasted_content>` runs to the end of the text.
+ * An unclosed `<pasted_content>` runs to the end of the text, and so does an
+ * injected tag left open where typed text would start (a truncated record).
  * Adjacent prompt segments are not merged here; see {@link mergePromptSegments}.
  */
 export function segmentUserText(text: string): UserTextSegment[] {
@@ -67,6 +71,11 @@ export function segmentUserText(text: string): UserTextSegment[] {
   let last = 0;
 
   const typed = (chunk: string) => {
+    const injected = UNCLOSED_INJECTED_RE.exec(chunk);
+    if (injected && !chunk.includes(`</${injected[1]}`)) {
+      out.push({ label: "system", source: injected[1] ?? "", text: (injected[2] ?? "").trim() });
+      return;
+    }
     if (chunk.trim() === "") {
       if (chunk) out.push({ label: "prompt", source: "typed", text: chunk });
       return;

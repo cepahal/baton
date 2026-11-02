@@ -4,6 +4,7 @@ import type { BatonEvent } from "@baton/core";
 import { type FSWatcher, watch } from "chokidar";
 import type { Logger } from "pino";
 import { limitConcurrency } from "./limit.js";
+import { mergeByTime } from "./merge.js";
 import { fileKey, isTranscript } from "./paths.js";
 import type { EventSink } from "./sink.js";
 import type { StateStore } from "./state-store.js";
@@ -85,8 +86,8 @@ export class TranscriptWatcher {
 
     const backlog = opened.flatMap((r) => r.backlog);
     const missed = opened.flatMap((r) => r.missed);
-    if (backlog.length > 0) await this.#publish(byTime(backlog), true);
-    if (missed.length > 0) await this.#publish(byTime(missed), false);
+    if (backlog.length > 0) await this.#publish(mergeByTime(backlog), true);
+    if (missed.length > 0) await this.#publish(mergeByTime(missed), false);
     this.#log.info(
       {
         projectsDir,
@@ -291,12 +292,4 @@ async function listTranscripts(dir: string): Promise<string[]> {
     .filter((e) => e.isFile() && isTranscript(e.name))
     .map((e) => join(e.parentPath, e.name))
     .sort();
-}
-
-/** Oldest first. Stable, so a session's order survives equal timestamps. */
-function byTime(events: BatonEvent[]): BatonEvent[] {
-  return events
-    .map((e, i) => ({ e, i, t: Date.parse(e.ts) }))
-    .sort((a, b) => a.t - b.t || a.i - b.i)
-    .map(({ e }) => e);
 }

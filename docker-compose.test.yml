@@ -1,0 +1,58 @@
+# Multi-machine test: one team server and six simulated teammates, each
+# replaying a different fixture as a live Claude Code session.
+#
+#   pnpm test:multi    bring it up, check every event arrives once and in order, tear down
+#   pnpm test:chaos    same, with a daemon killed and another cut off the network
+#
+# The machine names and fixtures here must match scripts/multi/fleet.mjs.
+
+x-machine: &machine
+  image: baton-test:latest # built by the server service
+  pull_policy: never
+  entrypoint: ["baton-machine"]
+  depends_on:
+    server:
+      condition: service_healthy
+  environment: &machine-env
+    BATON_TOKEN: ${BATON_TOKEN:-baton-multi-machine-test-token}
+    BATON_SERVER: ws://server:7777
+    SPEED: ${BATON_TEST_SPEED:-20}
+    MAX_GAP: ${BATON_TEST_MAX_GAP:-2}
+
+services:
+  server:
+    build: .
+    image: baton-test:latest
+    command: ["serve", "--port", "7777"]
+    environment:
+      BATON_TOKEN: ${BATON_TOKEN:-baton-multi-machine-test-token}
+    ports:
+      - "127.0.0.1:${BATON_TEST_PORT:-17777}:7777"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:7777/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  alice:
+    <<: *machine
+    environment: { <<: *machine-env, NAME: alice, FIXTURE: heavy-tools.jsonl }
+  bob:
+    <<: *machine
+    environment: { <<: *machine-env, NAME: bob, FIXTURE: api-requests.jsonl }
+  carol:
+    <<: *machine
+    environment: { <<: *machine-env, NAME: carol, FIXTURE: mixed.jsonl }
+  dave:
+    <<: *machine
+    environment: { <<: *machine-env, NAME: dave, FIXTURE: code-review.jsonl }
+  erin:
+    <<: *machine
+    environment: { <<: *machine-env, NAME: erin, FIXTURE: install-debug.jsonl }
+  frank:
+    <<: *machine
+    environment: { <<: *machine-env, NAME: frank, FIXTURE: long-build.jsonl }

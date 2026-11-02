@@ -3,6 +3,8 @@ import type { BatonEvent } from "@baton/core";
 export type PublishOptions = {
   /** The events are history read at startup, not activity seen live. */
   backlog?: boolean;
+  /** Display name of the daemon that sent the events (team server ingest only). */
+  source?: string;
 };
 
 /**
