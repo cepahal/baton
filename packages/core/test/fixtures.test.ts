@@ -1,10 +1,16 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 // Guards against committing unredacted transcripts. See fixtures/README.md.
 const FIXTURE_DIR = join(import.meta.dirname, "fixtures");
-const fixtures = readdirSync(FIXTURE_DIR).filter((f) => f.endsWith(".jsonl"));
+const CODEX_DIR = join(FIXTURE_DIR, "codex");
+const jsonlIn = (dir: string, prefix = "") =>
+  readdirSync(dir)
+    .filter((f) => f.endsWith(".jsonl"))
+    .map((f) => prefix + f);
+const fixtures = [...jsonlIn(FIXTURE_DIR), ...jsonlIn(CODEX_DIR, "codex/")];
 
 const ALLOWED_EMAILS = new Set(["dev@example.com", "noreply@anthropic.com"]);
 const ALLOWED_HOME_USERS = new Set(["dev", "Administrator", "Public"]);
@@ -34,9 +40,18 @@ describe.each(fixtures)("fixture %s", (name) => {
   it("has ~200 records, each a JSON object with a string type", () => {
     expect(lines.length).toBeGreaterThan(50);
     expect(lines.length).toBeLessThanOrEqual(250);
+    // Codex thread_items rows (see docs/spec.md, "Codex fixtures") carry
+    // item_type/item_id instead of a record type.
+    const shape = name.endsWith(".thread-items.jsonl")
+      ? {
+          item_id: expect.any(String),
+          item_type: expect.any(String),
+          item_json: expect.any(String),
+        }
+      : { type: expect.any(String) };
     for (const line of lines) {
       const record: unknown = JSON.parse(line);
-      expect(record).toMatchObject({ type: expect.any(String) });
+      expect(record).toMatchObject(shape);
     }
   });
 
@@ -61,5 +76,40 @@ describe.each(fixtures)("fixture %s", (name) => {
 
   it.each(LEAKS)("contains no %s", (_label, pattern) => {
     expect(lines.filter((l) => pattern.test(l)).map((l) => l.match(pattern)?.[0])).toEqual([]);
+  });
+});
+
+const CodexRecord = z.looseObject({
+  type: z.string(),
+  payload: z.looseObject({
+    type: z.string().optional(),
+    item: z.looseObject({ id: z.string() }).optional(),
+  }),
+});
+const ThreadItemRow = z.looseObject({ item_id: z.string() });
+
+const readJsonl = (path: string) =>
+  readFileSync(path, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l): unknown => JSON.parse(l));
+
+const codexPairs = jsonlIn(CODEX_DIR)
+  .filter((f) => f.endsWith(".rollout.jsonl"))
+  .map((f) => f.slice(0, -".rollout.jsonl".length));
+
+describe.each(codexPairs)("codex fixture pair %s", (name) => {
+  it("has one thread_items row per item_completed item in the rollout", () => {
+    const itemIds = readJsonl(join(CODEX_DIR, `${name}.rollout.jsonl`)).flatMap((r) => {
+      const rec = CodexRecord.parse(r);
+      return rec.type === "event_msg" && rec.payload.type === "item_completed" && rec.payload.item
+        ? [rec.payload.item.id]
+        : [];
+    });
+    const rowIds = readJsonl(join(CODEX_DIR, `${name}.thread-items.jsonl`)).map(
+      (r) => ThreadItemRow.parse(r).item_id,
+    );
+    expect(itemIds.length).toBeGreaterThan(0);
+    expect([...rowIds].sort()).toEqual([...itemIds].sort());
   });
 });

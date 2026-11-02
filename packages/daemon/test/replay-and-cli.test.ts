@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseTranscript } from "@baton/core";
+import { parseRolloutName, parseSession, parseTranscript, sniffAgent } from "@baton/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseCli } from "../src/cli.js";
 import { planReplay, runReplay } from "../src/replay.js";
@@ -113,6 +113,63 @@ describe("runReplay", () => {
     expect(total).toBe(plan.lines.at(-1)?.delayMs);
   });
 
+  it("replays a Codex rollout into the Codex sessions directory, as a new thread", async () => {
+    const fixture = join(FIXTURES, "codex", "speech-tool.rollout.jsonl");
+    let clock = Date.UTC(2026, 10, 2, 3, 4, 5);
+    const plan = await runReplay({
+      fixture,
+      codexDir: dirs.codexDir,
+      speed: 1000,
+      maxGapMs: 50,
+      as: "carol",
+      seed: "codex",
+      logger: silent,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    });
+    expect(plan.agent).toBe("codex");
+    expect(plan.file).toBe(
+      join(
+        dirs.codexDir,
+        "2026",
+        "11",
+        "02",
+        `rollout-2026-11-02T03-04-05-${plan.sessionId}.jsonl`,
+      ),
+    );
+    expect(parseRolloutName(plan.file)?.threadId).toBe(plan.sessionId);
+    const written = await readFile(plan.file, "utf8");
+    const original = parseSession("codex", await readFile(fixture, "utf8")).events;
+    const replayed = parseSession("codex", written).events;
+    expect(replayed.map((e) => [e.kind, e.seq])).toEqual(original.map((e) => [e.kind, e.seq]));
+    expect(new Set(replayed.map((e) => e.sessionId))).toEqual(new Set([plan.sessionId]));
+    expect(new Set(replayed.map((e) => e.agent))).toEqual(new Set(["codex"]));
+    expect(written).not.toContain("00000000-0000-4000-8000-000000000001");
+  });
+
+  it("needs the directory for the fixture's agent", async () => {
+    await expect(
+      runReplay({
+        fixture: join(FIXTURES, "codex", "speech-tool.rollout.jsonl"),
+        projectsDir: dirs.projectsDir,
+        speed: 1,
+        as: "x",
+        logger: silent,
+      }),
+    ).rejects.toThrow(/codex session: replaying it needs --codex-dir/);
+    await expect(
+      runReplay({
+        fixture: join(FIXTURES, "mixed.jsonl"),
+        codexDir: dirs.codexDir,
+        speed: 1,
+        as: "x",
+        logger: silent,
+      }),
+    ).rejects.toThrow(/claude-code session: replaying it needs --projects-dir/);
+  });
+
   it("stops when aborted", async () => {
     const abort = new AbortController();
     abort.abort(new Error("stop"));
@@ -189,6 +246,10 @@ describe("parseCli team commands", () => {
       },
     });
     expect(parseCli(["replay", "f.jsonl"], {})).toMatchObject({ command: "error" });
+    expect(parseCli(["replay", "r.jsonl", "--codex-dir", "c"], {})).toEqual({
+      command: "replay",
+      options: { fixture: "r.jsonl", codexDir: "c", speed: 1, as: "replay", logLevel: "info" },
+    });
     for (const [flag, speed] of [
       ["10x", 10],
       ["1X", 1],
@@ -213,5 +274,16 @@ describe("parseCli team commands", () => {
       command: "error",
       message: expect.stringMatching(/^--speed: /),
     });
+  });
+});
+
+describe("sniffAgent", () => {
+  it("tells a Codex rollout from a Claude Code transcript by its first record", async () => {
+    expect(sniffAgent(await readFile(join(FIXTURES, "mixed.jsonl"), "utf8"))).toBe("claude-code");
+    expect(
+      sniffAgent(await readFile(join(FIXTURES, "codex", "forked-frontend.rollout.jsonl"), "utf8")),
+    ).toBe("codex");
+    expect(sniffAgent('not json\n{"type":"user","message":{}}')).toBe("claude-code");
+    expect(sniffAgent("\n[1]\nnope")).toBeUndefined();
   });
 });

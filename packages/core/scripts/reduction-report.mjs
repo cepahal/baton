@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Size-reduction report: raw transcript bytes vs. parser output bytes.
-// Usage: node scripts/reduction-report.mjs [transcript.jsonl ...]
-// With no arguments it measures every fixture in test/fixtures.
+// Usage: node scripts/reduction-report.mjs [session-log.jsonl ...]
+// With no arguments it measures every fixture in test/fixtures (Claude Code)
+// and test/fixtures/codex (Codex rollouts). The agent is picked from the file name.
 // Reads the built package (dist), so run `pnpm build` first; `pnpm report` does both.
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { measureReduction } from "../dist/index.js";
+import { detectAgent, measureReduction } from "../dist/index.js";
 
 const MIN_REDUCTION = 0.9;
 const fixtureDir = join(import.meta.dirname, "..", "test", "fixtures");
@@ -14,13 +15,28 @@ if (files.length === 0) {
   for (const f of readdirSync(fixtureDir).sort()) {
     if (f.endsWith(".jsonl")) files.push(join(fixtureDir, f));
   }
+  const codexDir = join(fixtureDir, "codex");
+  for (const f of readdirSync(codexDir).sort()) {
+    if (f.endsWith(".rollout.jsonl")) files.push(join(codexDir, f));
+  }
 }
+
+/** Codex fixtures are named `<name>.rollout.jsonl`, not `rollout-….jsonl`. */
+/** Pre-redaction sizes of the Codex fixtures, which the reduction is measured against. */
+const codexRawBytes = JSON.parse(readFileSync(join(fixtureDir, "codex", "raw-bytes.json"), "utf8"));
+const originalBytes = (file) => codexRawBytes[basename(file, ".rollout.jsonl")];
+
+const agentOf = (file) =>
+  file.endsWith(".rollout.jsonl") ? "codex" : (detectAgent(file) ?? "claude-code");
 
 const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
 const pct = (r) => `${(r * 100).toFixed(1)}%`;
 const rows = files.map((file) => ({
   name: basename(file),
-  ...measureReduction(readFileSync(file, "utf8")),
+  ...measureReduction(readFileSync(file, "utf8"), {
+    agent: agentOf(file),
+    originalBytes: originalBytes(file),
+  }),
 }));
 const total = rows.reduce(
   (t, r) => ({
@@ -32,7 +48,7 @@ const total = rows.reduce(
 );
 
 const table = [
-  ["transcript", "lines", "raw", "full view", "events", "handoff", "events", "reduction"],
+  ["session log", "lines", "raw", "full view", "events", "handoff", "events", "reduction"],
   ...rows.map((r) => [
     r.name,
     r.rawLines,

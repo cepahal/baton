@@ -1,6 +1,7 @@
 import { appendFileSync, writeFileSync } from "node:fs";
 import type { BatonEvent } from "@baton/core";
 import { afterEach, describe, expect, it } from "vitest";
+import { logSources } from "../src/sources.js";
 import { StateStore } from "../src/state-store.js";
 import { TranscriptWatcher } from "../src/watcher.js";
 import { record, SESSION_A, SESSION_B, silent, tempProjects } from "./helpers.js";
@@ -29,7 +30,7 @@ describe("TranscriptWatcher startup", () => {
     let created = false;
     const events: BatonEvent[] = [];
     watcher = new TranscriptWatcher({
-      projectsDir: dirs.projectsDir,
+      sources: logSources({ "claude-code": dirs.projectsDir, codex: dirs.codexDir }),
       sink: { publish: (e) => void events.push(...e) },
       state: await StateStore.load(dirs.stateFile, silent),
       logger: silent,

@@ -6,7 +6,9 @@ export const FLEET = [
   { name: "dave", fixture: "code-review.jsonl" },
   { name: "erin", fixture: "install-debug.jsonl" },
   { name: "frank", fixture: "long-build.jsonl" },
-];
+  { name: "grace", fixture: "codex/speech-tool.rollout.jsonl", agent: "codex" },
+  { name: "heidi", fixture: "codex/forked-frontend.rollout.jsonl", agent: "codex" },
+].map((m) => ({ agent: "claude-code", ...m }));
 
 export const PROJECT = "baton-test";
 export const COMPOSE_FILE = "docker-compose.test.yml";

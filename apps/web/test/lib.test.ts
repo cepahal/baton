@@ -15,6 +15,7 @@ import { formatAgo, isLive } from "../src/lib/time.js";
 function ev(seq: number, extra: Partial<BatonEvent> = {}): BatonEvent {
   return {
     id: `e${seq}`,
+    agent: "claude-code",
     sessionId: "s1",
     projectPath: "/p",
     ts: new Date(seq * 1000).toISOString(),
@@ -236,6 +237,7 @@ describe("Selection", () => {
 describe("defaultSelection", () => {
   const session = (sessionId: string, lastActivity: string) => ({
     sessionId,
+    agent: "claude-code" as const,
     projectPath: "/p",
     projectName: "p",
     lastActivity,

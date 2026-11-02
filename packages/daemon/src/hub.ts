@@ -1,4 +1,5 @@
 import {
+  type AgentId,
   type BatonEvent,
   ClientMessage,
   type EventMessage,
@@ -51,6 +52,7 @@ export type Client = {
 };
 
 type SessionState = {
+  agent: AgentId;
   projectPath: string;
   /** Latest event `ts`, as written in the transcript. */
   lastActivity: string;
@@ -179,6 +181,7 @@ export class Hub implements EventSink {
       .sort(([, a], [, b]) => b.lastMs - a.lastMs || b.seenMs - a.seenMs)
       .map(([sessionId, s]) => ({
         sessionId,
+        agent: s.agent,
         projectPath: s.projectPath,
         projectName: projectName(s.projectPath),
         lastActivity: s.lastActivity,
@@ -265,6 +268,7 @@ export class Hub implements EventSink {
     const s = this.#sessions.get(event.sessionId);
     if (!s) {
       this.#sessions.set(event.sessionId, {
+        agent: event.agent,
         projectPath: event.projectPath,
         lastActivity: event.ts,
         lastMs: ms,

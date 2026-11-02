@@ -5,6 +5,7 @@ import { type DaemonConfig, HOST } from "./config.js";
 import { MemoryEventLog } from "./event-log.js";
 import { Hub } from "./hub.js";
 import { createServer } from "./server.js";
+import { logSources } from "./sources.js";
 import { StateStore } from "./state-store.js";
 import { TranscriptWatcher } from "./watcher.js";
 
@@ -47,7 +48,7 @@ export async function startDaemon(config: DaemonConfig, logger: Logger): Promise
   const port = typeof address === "object" && address ? address.port : config.port;
 
   const watcher = new TranscriptWatcher({
-    projectsDir: config.projectsDir,
+    sources: logSources({ "claude-code": config.projectsDir, codex: config.codexDir }),
     sink: hub,
     state,
     logger: logger.child({ component: "watcher" }),

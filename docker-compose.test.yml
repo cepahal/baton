@@ -1,5 +1,5 @@
-# Multi-machine test: one team server and six simulated teammates, each
-# replaying a different fixture as a live Claude Code session.
+# Multi-machine test: one team server and eight simulated teammates, each
+# replaying a different fixture as a live session: six Claude Code, two Codex.
 #
 #   pnpm test:multi    bring it up, check every event arrives once and in order, tear down
 #   pnpm test:chaos    same, with a daemon killed and another cut off the network
@@ -56,3 +56,9 @@ services:
   frank:
     <<: *machine
     environment: { <<: *machine-env, NAME: frank, FIXTURE: long-build.jsonl }
+  grace:
+    <<: *machine
+    environment: { <<: *machine-env, NAME: grace, FIXTURE: codex/speech-tool.rollout.jsonl }
+  heidi:
+    <<: *machine
+    environment: { <<: *machine-env, NAME: heidi, FIXTURE: codex/forked-frontend.rollout.jsonl }

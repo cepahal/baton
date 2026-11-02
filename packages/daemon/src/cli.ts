@@ -19,12 +19,13 @@ import { startTeamServer } from "./team-server.js";
 export const USAGE = `Usage:
   baton start [options]           Stream this machine's sessions (locally, or to a team server)
   baton serve [options]           Run a team server: hub + viewer for several daemons
-  baton replay <fixture> [options]  Write a transcript into a projects dir at its recorded pace
+  baton replay <fixture> [options]  Write a Claude Code or Codex log into a watched dir at its recorded pace
 
-baton start: watches Claude Code transcripts and serves them on
+baton start: watches Claude Code and Codex sessions and serves them on
 http://127.0.0.1:<port>, or with --server sends them to a team server.
   --port <n>            Port to listen on (default ${DEFAULT_PORT})
-  --projects-dir <dir>  Transcript directory (default ~/.claude/projects)
+  --projects-dir <dir>  Claude Code transcripts (default ~/.claude/projects)
+  --codex-dir <dir>     Codex session logs (default ~/.codex/sessions)
   --state-file <file>   Where read offsets are saved
   --backlog <n|all>     History events sent per session (default all)
   --buffer-mb <n>       Memory for events kept for viewers (default ${DEFAULT_BUFFER_MB})
@@ -44,8 +45,9 @@ BATON_TOKEN (at least ${MIN_TOKEN_LENGTH} characters).
   --buffer-mb, --buffer-size, --web-dir   As for start
   --active-minutes <n>  How recently a session must have sent events to be listed (default 1440)
 
-baton replay <fixture>:
-  --projects-dir <dir>  Projects directory a daemon is watching (required)
+baton replay <fixture>: a Claude Code transcript or a Codex rollout (detected from its contents)
+  --projects-dir <dir>  Claude Code projects directory a daemon is watching (for Claude Code fixtures)
+  --codex-dir <dir>     Codex sessions directory a daemon is watching (for Codex fixtures)
   --speed <n>|<n>x      Play n times faster than recorded, e.g. 1x or 10x (default 1x)
   --as <name>           Simulated user: username in paths, and the run's label (default replay)
   --max-gap <seconds>   Cut longer pauses (after scaling) to this
@@ -72,7 +74,8 @@ const Env = z.object({ BATON_TOKEN: z.string().min(1).optional() });
 
 const ReplayArgs = z.object({
   fixture: z.string().min(1),
-  projectsDir: z.string().min(1),
+  projectsDir: z.string().min(1).optional(),
+  codexDir: z.string().min(1).optional(),
   speed: z
     .string()
     .regex(/^\d+(\.\d+)?x?$/i, "a number like 1, 10 or 10x")
@@ -117,6 +120,7 @@ export function parseCli(
         const config = resolveConfig({
           port: values.port,
           projectsDir: values["projects-dir"],
+          codexDir: values["codex-dir"],
           stateFile: values["state-file"],
           backlog: values.backlog,
           bufferMb: values["buffer-mb"],
@@ -142,6 +146,7 @@ export function parseCli(
         if (rest.length > 0) return unexpected(rest[0]);
         const misplaced = firstSet(values, [
           "projects-dir",
+          "codex-dir",
           "state-file",
           "backlog",
           "poll",
@@ -174,12 +179,13 @@ export function parseCli(
         const [fixture, ...extra] = rest;
         if (fixture === undefined) return { command: "error", message: "replay needs a fixture" };
         if (extra.length > 0) return unexpected(extra[0]);
-        if (values["projects-dir"] === undefined) {
-          return { command: "error", message: "replay needs --projects-dir" };
+        if (values["projects-dir"] === undefined && values["codex-dir"] === undefined) {
+          return { command: "error", message: "replay needs --projects-dir or --codex-dir" };
         }
         const args = ReplayArgs.parse({
           fixture,
           projectsDir: values["projects-dir"],
+          codexDir: values["codex-dir"],
           speed: values.speed,
           as: values.as,
           maxGap: values["max-gap"],
@@ -190,7 +196,8 @@ export function parseCli(
           command: "replay",
           options: {
             fixture: args.fixture,
-            projectsDir: args.projectsDir,
+            ...(args.projectsDir === undefined ? {} : { projectsDir: args.projectsDir }),
+            ...(args.codexDir === undefined ? {} : { codexDir: args.codexDir }),
             speed: args.speed,
             as: args.as,
             logLevel: args.logLevel,
@@ -224,6 +231,7 @@ function parse(argv: readonly string[]) {
       port: { type: "string" },
       host: { type: "string" },
       "projects-dir": { type: "string" },
+      "codex-dir": { type: "string" },
       "state-file": { type: "string" },
       backlog: { type: "string" },
       "buffer-mb": { type: "string" },

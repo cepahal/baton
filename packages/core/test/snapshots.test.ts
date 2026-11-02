@@ -4,9 +4,16 @@ import {
   compactForLLM,
   measureReduction,
   oneLine,
+  parseSession,
   parseTranscript,
 } from "../src/index.js";
-import { FIXTURES, readFixture } from "./helpers.js";
+import {
+  CODEX_FIXTURES,
+  codexOriginalBytes,
+  FIXTURES,
+  readCodexRollout,
+  readFixture,
+} from "./helpers.js";
 
 /** One line per event: seq, kind, label, and the start of its text. */
 const digest = (events: BatonEvent[]) =>
@@ -35,6 +42,29 @@ describe.each(FIXTURES)("fixture %s", (name) => {
 
   it("shrinks the handoff by more than 90% vs. raw bytes", () => {
     const r = measureReduction(raw);
+    expect(r.warnings).toBe(0);
+    expect(r.reduction).toBeGreaterThan(0.9);
+    expect(r.fullBytes).toBeGreaterThan(r.compactBytes);
+  });
+});
+
+describe.each(CODEX_FIXTURES)("codex fixture %s", (name) => {
+  const raw = readCodexRollout(name);
+  const { events } = parseSession("codex", raw);
+
+  it("matches the full-view snapshot", async () => {
+    await expect(`${digest(events)}
+`).toMatchFileSnapshot(`__snapshots__/codex/${name}.events.tsv`);
+  });
+
+  it("matches the handoff snapshot", async () => {
+    await expect(jsonl(compactForLLM(events))).toMatchFileSnapshot(
+      `__snapshots__/codex/${name}.compact.jsonl`,
+    );
+  });
+
+  it("shrinks the handoff by more than 90% vs. pre-redaction raw bytes", () => {
+    const r = measureReduction(raw, { agent: "codex", originalBytes: codexOriginalBytes(name) });
     expect(r.warnings).toBe(0);
     expect(r.reduction).toBeGreaterThan(0.9);
     expect(r.fullBytes).toBeGreaterThan(r.compactBytes);

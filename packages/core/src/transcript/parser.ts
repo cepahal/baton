@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { BatonEvent, BatonEventKind, BatonEventMeta, JsonValue } from "../event.js";
+import { type Draft, eventsFromDrafts, meta, type SessionState, systemDraft } from "../draft.js";
+import type { BatonEvent } from "../event.js";
 import {
   AssistantRecord,
   type ContentBlock,
@@ -12,13 +13,7 @@ import {
   ToolUseBlock,
   UserRecord,
 } from "./records.js";
-import {
-  isOneLiner,
-  summarizeText,
-  summarizeToolCall,
-  summarizeToolResult,
-  type ToolCallInfo,
-} from "./tool-format.js";
+import { summarizeToolCall, summarizeToolResult, type ToolCallInfo } from "./tool-format.js";
 import { mergePromptSegments, segmentUserText } from "./user-content.js";
 
 export type ParseWarning = { line: number; reason: string };
@@ -31,7 +26,6 @@ export type ParserOptions = {
   debug?: (message: string) => void;
 };
 
-type Draft = { kind: BatonEventKind; text: string; meta?: BatonEventMeta };
 type CommonRecord = {
   uuid: string;
   sessionId: string;
@@ -48,30 +42,13 @@ const isHandled = (t: string): t is (typeof HANDLED_RECORD_TYPES)[number] =>
   (HANDLED_RECORD_TYPES as readonly string[]).includes(t);
 const isIgnored = (t: string): boolean => (IGNORED_RECORD_TYPES as readonly string[]).includes(t);
 
-/** Builds a meta object, leaving out undefined values. */
-function meta(fields: Record<string, JsonValue | undefined>): BatonEventMeta {
-  const out: BatonEventMeta = {};
-  for (const [k, v] of Object.entries(fields)) if (v !== undefined) out[k] = v;
-  return out;
-}
-
-/**
- * A system event: one-liners as is; anything longer gets a one-line recap in
- * `text` and the original in `meta.full`.
- */
-function systemDraft(text: string, fields: Record<string, JsonValue | undefined>): Draft {
-  const t = text.trim();
-  if (isOneLiner(t)) return { kind: "system", text: t, meta: meta(fields) };
-  return { kind: "system", text: summarizeText(t), meta: meta({ ...fields, full: t }) };
-}
-
 /**
  * Incremental transcript parser: feed it lines in file order, get events back.
  * Holds per-session state (seq counters, tool calls) but does no I/O.
  * Never throws on bad input: a line it can't use yields no events.
  */
 export function createTranscriptParser(options: ParserOptions = {}) {
-  const sessions = new Map<string, { seq: number; projectPath: string }>();
+  const sessions = new Map<string, SessionState>();
   const toolCalls = new Map<string, ToolCallInfo>();
   let lineNo = 0;
 
@@ -169,6 +146,7 @@ export function createTranscriptParser(options: ParserOptions = {}) {
       sessions.set(r.sessionId, session);
       events.push({
         id: `${r.sessionId}:start`,
+        agent: "claude-code",
         sessionId: r.sessionId,
         projectPath: session.projectPath,
         ts: r.timestamp,
@@ -182,19 +160,17 @@ export function createTranscriptParser(options: ParserOptions = {}) {
 
     // Subagent work: viewers fold it under the Agent/Task call that started it.
     const sidechain = r.isSidechain ? meta({ sidechain: true, agentId: r.agentId }) : {};
-    drafts.forEach((d, i) => {
-      const m = { ...d.meta, ...sidechain };
-      events.push({
-        id: `${r.uuid}:${i}`,
-        sessionId: r.sessionId,
-        projectPath: session.projectPath,
-        ts: r.timestamp,
-        seq: session.seq++,
-        kind: d.kind,
-        text: d.text,
-        ...(Object.keys(m).length > 0 ? { meta: m } : {}),
-      });
-    });
+    events.push(
+      ...eventsFromDrafts(
+        "claude-code",
+        r.sessionId,
+        session,
+        r.timestamp,
+        r.uuid,
+        drafts,
+        sidechain,
+      ),
+    );
     return events;
   }
 

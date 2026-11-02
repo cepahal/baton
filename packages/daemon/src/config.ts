@@ -24,6 +24,8 @@ const int = (min: number) => z.coerce.number().int().min(min);
 export const DaemonConfig = z.object({
   port: int(0).max(65535),
   projectsDir: z.string().min(1),
+  /** Codex session logs (`~/.codex/sessions`). */
+  codexDir: z.string().min(1),
   stateFile: z.string().min(1),
   /** History events sent per session: a count, or "all". */
   backlog: z.union([z.literal("all"), int(0)]),
@@ -87,6 +89,7 @@ export const defaultWebDir = () =>
   fileURLToPath(new URL("../../../apps/web/dist", import.meta.url));
 
 export const defaultProjectsDir = () => join(homedir(), ".claude", "projects");
+export const defaultCodexDir = () => join(homedir(), ".codex", "sessions");
 
 /** `%LOCALAPPDATA%\baton` on Windows, `$XDG_STATE_HOME/baton` or `~/.local/state/baton` elsewhere. */
 export function defaultStateFile(env: NodeJS.ProcessEnv = process.env): string {
@@ -107,6 +110,7 @@ export function resolveConfig(
   const config = DaemonConfig.parse({
     port: input.port ?? DEFAULT_PORT,
     projectsDir: input.projectsDir ?? defaultProjectsDir(),
+    codexDir: input.codexDir ?? defaultCodexDir(),
     stateFile,
     backlog: input.backlog ?? "all",
     bufferMb: input.bufferMb ?? DEFAULT_BUFFER_MB,
@@ -128,6 +132,7 @@ export function resolveConfig(
   return {
     ...config,
     projectsDir: resolve(config.projectsDir),
+    codexDir: resolve(config.codexDir),
     stateFile: resolve(config.stateFile),
     webDir: resolve(config.webDir),
     ...(config.remote

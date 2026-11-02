@@ -1,11 +1,12 @@
 import type { BatonEvent } from "@baton/core";
 import { describe, expect, it } from "vitest";
 import { MemoryEventLog } from "../src/event-log.js";
-import { SESSION_A } from "./helpers.js";
+import { SESSION_A, SESSION_B } from "./helpers.js";
 
 let n = 0;
 const ev = (text = "x", id = `e${++n}`): BatonEvent => ({
   id,
+  agent: "claude-code",
   sessionId: SESSION_A,
   projectPath: "/home/dev/proj",
   ts: "2026-11-01T12:00:00.000Z",
@@ -37,6 +38,16 @@ describe("MemoryEventLog", () => {
     log.append(ev("a", "same"), true);
     expect(log.append(ev("again", "same"), false)).toBeUndefined();
     expect([log.lastSeq, log.size]).toEqual([1, 1]);
+  });
+
+  it("keeps the same event id in two sessions (ids are unique per session)", () => {
+    // A forked Codex thread repeats its parent's item ids.
+    const log = new MemoryEventLog({ maxBytes: 1024 * 1024 });
+    log.append(ev("parent", "item_1:0"), false);
+    const other = { ...ev("fork", "item_1:0"), sessionId: SESSION_B };
+    expect(log.append(other, false)?.seq).toBe(2);
+    expect(log.append({ ...other, text: "again" }, false)).toBeUndefined();
+    expect(texts(log)).toEqual(["parent", "fork"]);
   });
 
   it("drops the oldest events once over its byte budget", () => {

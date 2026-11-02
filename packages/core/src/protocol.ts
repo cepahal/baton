@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BatonEvent } from "./event.js";
+import { AgentId, BatonEvent } from "./event.js";
 
 /** Wire protocol between a Baton hub and its viewers. See docs/spec.md. */
 export const PROTOCOL_VERSION = 1;
@@ -82,6 +82,8 @@ export type ServerMessage = z.infer<typeof ServerMessage>;
 
 export const SessionInfo = z.object({
   sessionId: z.string().min(1),
+  /** Which coding agent the session runs in. Older servers omit it: Claude Code. */
+  agent: AgentId.default("claude-code"),
   projectPath: z.string(),
   /** Last segment of `projectPath`. */
   projectName: z.string(),

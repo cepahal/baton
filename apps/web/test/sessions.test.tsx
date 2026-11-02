@@ -5,8 +5,13 @@ import { describe, expect, it } from "vitest";
 import { Sidebar } from "../src/components/Sidebar.js";
 import { groupBySource } from "../src/lib/session-groups.js";
 
-const session = (sessionId: string, source?: string): SessionInfo => ({
+const session = (
+  sessionId: string,
+  source?: string,
+  agent: SessionInfo["agent"] = "claude-code",
+): SessionInfo => ({
   sessionId,
+  agent,
   projectPath: `/work/${sessionId}`,
   projectName: sessionId,
   lastActivity: "2026-11-01T12:00:00.000Z",
@@ -54,6 +59,14 @@ describe("Sidebar", () => {
     const html = render([session("a1", "alice"), session("b1", "bob")]);
     expect(html).toContain('class="session-group-name">alice<');
     expect(html).toContain('class="session-group-name">bob<');
+  });
+
+  it("marks each session with its agent's icon", () => {
+    const html = render([session("c1"), session("x1", undefined, "codex")]);
+    expect(html).toContain(
+      'class="agent-icon agent-claude-code" role="img" aria-label="Claude Code"',
+    );
+    expect(html).toContain('class="agent-icon agent-codex" role="img" aria-label="Codex"');
   });
 
   it("shows no group headings for a local daemon", () => {

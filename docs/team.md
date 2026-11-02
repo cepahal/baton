@@ -19,7 +19,7 @@ http://team-host:7777/?token=<same secret>     # or open / and type it on the si
 machine A: TranscriptWatcher ─▶ RemoteSink ─▶ DiskQueue ─┐
 machine B: TranscriptWatcher ─▶ RemoteSink ─▶ DiskQueue ─┤ WebSocket /ingest
 ...                                                     ▼
-                                    baton serve: Hub (dedupes by event id) ─▶ /ws, /sessions, /events ─▶ browsers
+                                    baton serve: Hub (dedupes by session + event id) ─▶ /ws, /sessions, /events ─▶ browsers
 ```
 
 The watcher is the same one local mode uses; only its `EventSink` changes. The
@@ -88,27 +88,39 @@ multi-machine tests use it to check what arrived.
 
 ## Simulating teammates
 
-`baton replay <fixture> --projects-dir <dir> [--speed n] [--as name]
-[--max-gap s] [--seed text]` writes a transcript into a fresh file under
-`<dir>/<cwd slug>/<new session id>.jsonl`, line by line at the pace of the
+`baton replay <fixture> [--projects-dir <dir>] [--codex-dir <dir>] [--speed n]
+[--as name] [--max-gap s] [--seed text]` writes a session log into a fresh file,
+line by line at the pace of the
 recorded timestamps divided by `--speed`. Pauses longer than `--max-gap` (after
 scaling) are cut. Every UUID gets a fresh one (consistently, derived from
 `--seed`), the username in paths becomes `--as`, and timestamps are rewritten
 to the replay's clock, so a daemon watching `<dir>` sees a new, live session.
 A record whose timestamp goes backwards is written straight away.
 
+Replay tells the agent from the fixture's first record (`sniffAgent` in core:
+Codex rollout lines are `{ type, payload }` envelopes) and needs the matching
+directory:
+
+- Claude Code transcript → `--projects-dir`, written to
+  `<dir>/<cwd slug>/<new session id>.jsonl`.
+- Codex rollout → `--codex-dir`, written to
+  `<dir>/YYYY/MM/DD/rollout-<time>-<new thread id>.jsonl` (UTC), as Codex
+  names a new thread. A fixture that starts mid-thread (a segment file, such as
+  `forked-frontend`) is written as a new thread's first file.
+
 ## Multi-machine tests
 
-`docker-compose.test.yml` runs one server and six machines (`alice` … `frank`,
-see `scripts/multi/fleet.mjs`), each replaying a different fixture into its
-own projects dir while `baton start --server` forwards it
+`docker-compose.test.yml` runs one server and eight machines (`alice` …
+`heidi`, see `scripts/multi/fleet.mjs`), each replaying a different fixture
+into its own projects or Codex sessions dir while `baton start --server` forwards it
 (`docker/machine.sh`). The daemon runs in a restart loop with its pid in
 `/data/daemon.pid`, standing in for a supervisor.
 
 - `pnpm test:multi`: brings the stack up, waits until every machine's session
-  is complete, then checks via `/sessions` and `/events` that there are six
-  sessions, one per daemon name; hub seqs run 1..n with no holes; no id
-  repeats; and each session's events have the parser's seqs `0..n-1` in order,
+  is complete, then checks via `/sessions` and `/events` that there are eight
+  sessions, one per daemon name, each with the fixture's agent (six Claude
+  Code, two Codex: `grace`, `heidi`); hub seqs run 1..n with no holes; no id
+  repeats within a session; and each session's events have the parser's seqs `0..n-1` in order,
   with the same kinds the parser produces for its fixture. Tears down after.
 - `pnpm test:chaos`: the same, with replays slowed so faults land mid-stream.
   It `kill -9`s bob's daemon (it restarts and resends) and disconnects alice's

@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 import type { DaemonConfig, RemoteConfig } from "./config.js";
 import { DiskQueue } from "./disk-queue.js";
 import { RemoteSink } from "./remote-sink.js";
+import { logSources } from "./sources.js";
 import { StateStore } from "./state-store.js";
 import { TranscriptWatcher } from "./watcher.js";
 
@@ -37,7 +38,7 @@ export async function startForwarder(
   sink.start();
 
   const watcher = new TranscriptWatcher({
-    projectsDir: config.projectsDir,
+    sources: logSources({ "claude-code": config.projectsDir, codex: config.codexDir }),
     sink,
     state,
     logger: logger.child({ component: "watcher" }),

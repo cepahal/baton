@@ -3,6 +3,7 @@ import type { ConnectionState } from "../lib/connection.js";
 import { SESSION_DRAG_TYPE } from "../lib/drag.js";
 import { groupBySource } from "../lib/session-groups.js";
 import { formatAgo, isLive } from "../lib/time.js";
+import { AgentIcon } from "./AgentIcon.js";
 import { ConnectionBadge } from "./ConnectionBadge.js";
 import { LiveDot } from "./LiveDot.js";
 
@@ -34,7 +35,7 @@ export function Sidebar(props: Props) {
       {props.error && <p className="sidebar-note is-error">{props.error}</p>}
       {props.loaded && sessions.length === 0 && !props.error && (
         <p className="sidebar-note">
-          No sessions yet. Start Claude Code anywhere and it shows up here.
+          No sessions yet. Start Claude Code or Codex anywhere and it shows up here.
         </p>
       )}
       <div className="session-groups">
@@ -70,6 +71,7 @@ export function Sidebar(props: Props) {
                       onClick={() => props.onToggle(s.sessionId)}
                     >
                       <LiveDot live={isLive(s.lastActivity, now)} />
+                      <AgentIcon agent={s.agent} />
                       <span className="session-text">
                         <span className="session-name">{s.projectName}</span>
                         <span className="session-meta">

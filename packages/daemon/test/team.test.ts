@@ -22,6 +22,7 @@ function event(
   const n = ++seq;
   return {
     id: `${sessionId}:${n}`,
+    agent: "claude-code",
     sessionId,
     projectPath: "/home/dev/proj",
     ts,
@@ -266,6 +267,7 @@ describe("team server", () => {
     const config = {
       port: 0,
       projectsDir: dirs.projectsDir,
+      codexDir: dirs.codexDir,
       stateFile: dirs.stateFile,
       backlog: "all" as const,
       bufferMb: 1,

@@ -72,7 +72,9 @@ key-like strings.
 (`*.events.tsv` digest, `*.compact.jsonl` handoff). When a parser change
 alters them on purpose, review the diff, then update with `pnpm test -u`.
 The handoff must stay **>90% smaller than the raw fixture bytes**; a test
-enforces it and `pnpm report` prints the numbers.
+enforces it and `pnpm report` prints the numbers. Codex fixtures
+(`fixtures/codex/`) are measured against their pre-redaction size in
+`codex/raw-bytes.json`, since redaction cuts most of a rollout's bytes.
 
 ## Commands
 
@@ -89,7 +91,7 @@ pnpm check       # lint + typecheck + test + build (what CI runs)
 pnpm report      # size-reduction report: raw transcript bytes vs. parser output
 pnpm coverage    # test coverage of packages/core/src
 pnpm baton start # run the built daemon (pnpm build first); --help for options
-pnpm test:multi  # Docker: 1 team server + 6 replaying daemons, checks exactly-once delivery
+pnpm test:multi  # Docker: 1 team server + 8 replaying daemons (6 Claude Code, 2 Codex), checks exactly-once delivery
 pnpm test:chaos  # same, killing one daemon and cutting another off the network for 30s
 ```
 

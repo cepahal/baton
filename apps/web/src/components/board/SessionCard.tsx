@@ -4,6 +4,7 @@ import { useSessionEvents } from "../../hooks/useStore.js";
 import type { EventStore } from "../../lib/event-store.js";
 import { summarize } from "../../lib/summary.js";
 import { formatAgo } from "../../lib/time.js";
+import { AgentIcon } from "../AgentIcon.js";
 import { LiveDot } from "../LiveDot.js";
 
 type Props = {
@@ -22,6 +23,7 @@ export function SessionCard({ store, sessionId, info, live, now, open, onOpen }:
   const summary = useMemo(() => summarize(events), [events]);
   const name = info?.projectName ?? events[0]?.projectPath ?? sessionId;
   const owner = info?.source ?? "local";
+  const agent = info?.agent ?? events[0]?.agent ?? "claude-code";
   return (
     <article className={`card${open ? " is-open" : ""}`} aria-label={`Session ${name}`}>
       <button
@@ -33,6 +35,7 @@ export function SessionCard({ store, sessionId, info, live, now, open, onOpen }:
       >
         <span className="card-head">
           <LiveDot live={live} />
+          <AgentIcon agent={agent} />
           <span className="card-name">{name}</span>
         </span>
         <span className="card-owner">

@@ -3,6 +3,7 @@ import { BatonEvent } from "../src/index.js";
 
 const valid = {
   id: "evt-1",
+  agent: "claude-code",
   sessionId: "00000000-0000-4000-8000-000000000001",
   projectPath: "/home/dev/project",
   ts: "2026-11-01T12:00:00.000Z",
@@ -20,6 +21,15 @@ describe("BatonEvent", () => {
   it("accepts an event without meta", () => {
     const { meta: _meta, ...rest } = valid;
     expect(BatonEvent.safeParse(rest).success).toBe(true);
+  });
+
+  it("defaults a missing agent to claude-code (events from older daemons)", () => {
+    const { agent: _agent, ...rest } = valid;
+    expect(BatonEvent.parse(rest).agent).toBe("claude-code");
+  });
+
+  it("rejects an unknown agent", () => {
+    expect(BatonEvent.safeParse({ ...valid, agent: "cursor" }).success).toBe(false);
   });
 
   it("rejects an unknown kind", () => {

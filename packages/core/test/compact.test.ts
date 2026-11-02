@@ -12,6 +12,7 @@ import {
 let seq = 0;
 const ev = (kind: BatonEvent["kind"], text: string, meta?: BatonEvent["meta"]): BatonEvent => ({
   id: `e${seq}`,
+  agent: "claude-code",
   sessionId: "s",
   projectPath: "/p",
   ts: "2026-11-01T12:00:00.000Z",

@@ -183,6 +183,7 @@ describe("baton daemon", () => {
     expect(body.sessions).toEqual([
       {
         sessionId: SESSION_A,
+        agent: "claude-code",
         projectPath: "/home/dev/proj",
         projectName: "proj",
         lastActivity: client.events.at(-1)?.event.ts,

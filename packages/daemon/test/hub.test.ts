@@ -25,6 +25,7 @@ class FakeSocket implements ClientSocket {
 let n = 0;
 const ev = (sessionId: string, text: string, ts = "2026-11-01T12:00:00.000Z"): BatonEvent => ({
   id: `e${++n}`,
+  agent: "claude-code",
   sessionId,
   projectPath: "/home/dev/proj",
   ts,
@@ -158,6 +159,7 @@ describe("Hub", () => {
     expect(h.sessions()).toEqual([
       {
         sessionId: "00000000-0000-4000-8000-00000000000c",
+        agent: "claude-code",
         projectPath: "/home/dev/proj",
         projectName: "proj",
         lastActivity: "2026-11-01T12:00:00.000Z",
@@ -165,6 +167,7 @@ describe("Hub", () => {
       },
       {
         sessionId: SESSION_B,
+        agent: "claude-code",
         projectPath: "/home/dev/proj",
         projectName: "proj",
         lastActivity: "2026-11-01T11:00:00.000Z",

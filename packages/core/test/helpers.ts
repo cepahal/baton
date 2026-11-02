@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 
 /** Synthetic transcript records for unit tests. */
 
@@ -46,3 +47,29 @@ export const FIXTURES = [
 
 export const fixturePath = (name: string) => join(import.meta.dirname, "fixtures", `${name}.jsonl`);
 export const readFixture = (name: string) => readFileSync(fixturePath(name), "utf8");
+
+/** The redacted Codex sessions in test/fixtures/codex (see its README). */
+export const CODEX_FIXTURES = ["speech-tool", "forked-frontend"] as const;
+
+export const codexRolloutPath = (name: string) =>
+  join(import.meta.dirname, "fixtures", "codex", `${name}.rollout.jsonl`);
+export const readCodexRollout = (name: string) => readFileSync(codexRolloutPath(name), "utf8");
+export const readCodexThreadItems = (name: string) =>
+  readFileSync(
+    join(import.meta.dirname, "fixtures", "codex", `${name}.thread-items.jsonl`),
+    "utf8",
+  );
+
+/** Pre-redaction byte size of each Codex fixture (see the fixtures README). */
+export const codexOriginalBytes = (name: string): number => {
+  const sizes = z
+    .record(z.string(), z.number().int().positive())
+    .parse(
+      JSON.parse(
+        readFileSync(join(import.meta.dirname, "fixtures", "codex", "raw-bytes.json"), "utf8"),
+      ),
+    );
+  const n = sizes[name];
+  if (n === undefined) throw new Error(`no raw-bytes.json entry for ${name}`);
+  return n;
+};

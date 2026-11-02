@@ -5,11 +5,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  EventsResponse,
-  parseTranscript,
-  SessionsResponse,
-} from "../../packages/core/dist/index.js";
+import { EventsResponse, parseSession, SessionsResponse } from "../../packages/core/dist/index.js";
 import { BASE_URL, COMPOSE_FILE, FLEET, PROJECT, TOKEN } from "./fleet.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
@@ -98,7 +94,7 @@ export async function allEvents() {
 export function expectedKinds() {
   return new Map(
     FLEET.map((m) => {
-      const { events } = parseTranscript(readFileSync(join(FIXTURES, m.fixture), "utf8"));
+      const { events } = parseSession(m.agent, readFileSync(join(FIXTURES, m.fixture), "utf8"));
       return [m.name, events.map((e) => e.kind)];
     }),
   );
@@ -131,6 +127,9 @@ export function check(state, expected) {
   for (const m of FLEET) {
     const own = list.filter((s) => s.source === m.name);
     if (own.length !== 1) problems.push(`${m.name}: ${own.length} sessions, expected 1`);
+    for (const s of own) {
+      if (s.agent !== m.agent) problems.push(`${m.name}: agent ${s.agent}, expected ${m.agent}`);
+    }
   }
   if (list.length !== FLEET.length)
     problems.push(`${list.length} sessions, expected ${FLEET.length}`);
@@ -142,7 +141,8 @@ export function check(state, expected) {
     if (msg.seq !== i + 1 && problems.length < 20)
       problems.push(`hub seq ${msg.seq} at position ${i + 1}`);
   });
-  const ids = events.map((m) => m.event.id);
+  // Ids are unique per session; forked Codex threads repeat item ids across sessions.
+  const ids = events.map((m) => `${m.event.sessionId} ${m.event.id}`);
   const dupes = ids.length - new Set(ids).size;
   if (dupes) problems.push(`${dupes} duplicate event ids`);
 

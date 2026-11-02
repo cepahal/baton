@@ -20,6 +20,7 @@ import { summarize } from "../src/lib/summary.js";
 
 const ev = (seq: number, kind: BatonEvent["kind"], text: string): BatonEvent => ({
   id: `e${seq}`,
+  agent: "claude-code",
   sessionId: "s1",
   projectPath: "/work/app",
   ts: "2026-11-01T12:00:00.000Z",
@@ -68,6 +69,7 @@ describe("SessionCard", () => {
         sessionId: "s1",
         info: {
           sessionId: "s1",
+          agent: "claude-code",
           projectPath: "/work/app",
           projectName: "app",
           lastActivity: "2026-11-01T12:00:00.000Z",
@@ -81,8 +83,37 @@ describe("SessionCard", () => {
       }),
     );
     expect(html).toContain("alice");
+    expect(html).toContain('aria-label="Claude Code"');
     expect(html).toContain("No prompts yet.");
     expect(html).toContain('aria-expanded="false"');
+  });
+});
+
+describe("SessionCard agent", () => {
+  it("falls back to the agent of the session's events before /sessions knows it", () => {
+    const store = new EventStore();
+    store.add({
+      id: "x:start",
+      agent: "codex",
+      sessionId: "x",
+      projectPath: "/work/x",
+      ts: "2026-11-01T12:00:00.000Z",
+      seq: 0,
+      kind: "session_start",
+      text: "/work/x",
+    });
+    const html = renderToStaticMarkup(
+      createElement(SessionCard, {
+        store,
+        sessionId: "x",
+        info: undefined,
+        live: true,
+        now: Date.parse("2026-11-01T12:00:05.000Z"),
+        open: false,
+        onOpen: () => {},
+      }),
+    );
+    expect(html).toContain('aria-label="Codex"');
   });
 });
 

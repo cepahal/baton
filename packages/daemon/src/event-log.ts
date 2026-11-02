@@ -12,8 +12,10 @@ export type LogEntry = { seq: number; backlog: boolean; event: BatonEvent };
  * a new epoch and clients replay everything. A persistent log (a file or
  * SQLite under the state dir) can implement this interface to keep the epoch,
  * seqs and history across restarts; the hub and watcher don't change. Because
- * `append` skips event ids it already holds, the history the watcher publishes
- * again after a restart is deduplicated rather than replayed twice.
+ * `append` skips event ids it already holds for that session, the history the
+ * watcher publishes again after a restart is deduplicated rather than replayed
+ * twice. Ids are only unique within a session (docs/spec.md): a forked Codex
+ * thread repeats its parent's item ids, so two sessions may share one.
  */
 export interface EventLog {
   /** Seqs are only comparable within one epoch. */
@@ -51,6 +53,7 @@ export class MemoryEventLog implements EventLog {
   readonly #entries: (Stored | undefined)[] = [];
   /** Index of the oldest live entry; the array is compacted occasionally. */
   #head = 0;
+  /** `dedupeKey` of every held event. */
   readonly #ids = new Set<string>();
   #bytes = 0;
   #lastSeq = 0;
@@ -79,11 +82,12 @@ export class MemoryEventLog implements EventLog {
   }
 
   append(event: BatonEvent, backlog: boolean): LogEntry | undefined {
-    if (this.#ids.has(event.id)) return undefined;
+    const key = dedupeKey(event);
+    if (this.#ids.has(key)) return undefined;
     const bytes = Buffer.byteLength(JSON.stringify(event)) + ENTRY_OVERHEAD_BYTES;
     const stored: Stored = { seq: ++this.#lastSeq, backlog, event, bytes };
     this.#entries.push(stored);
-    this.#ids.add(event.id);
+    this.#ids.add(key);
     this.#bytes += bytes;
     this.#evict();
     return { seq: stored.seq, backlog, event };
@@ -122,7 +126,7 @@ export class MemoryEventLog implements EventLog {
       this.#entries[this.#head] = undefined;
       this.#head++;
       this.#bytes -= oldest.bytes;
-      this.#ids.delete(oldest.event.id);
+      this.#ids.delete(dedupeKey(oldest.event));
     }
     // Compact once the dead prefix is large, so shifting stays amortized O(1).
     if (this.#head > 1024 && this.#head * 2 > this.#entries.length) {
@@ -131,3 +135,6 @@ export class MemoryEventLog implements EventLog {
     }
   }
 }
+
+/** Event ids are unique within a session, so duplicates are found per session. */
+const dedupeKey = (event: BatonEvent): string => `${event.sessionId}\u0000${event.id}`;

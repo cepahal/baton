@@ -1,13 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { type AgentId, sniffAgent } from "@baton/core";
 import type { Logger } from "pino";
 
 export type ReplayOptions = {
-  /** Transcript (`.jsonl`) to replay. */
+  /** Session log (`.jsonl`) to replay: a Claude Code transcript or a Codex rollout. */
   fixture: string;
-  /** Projects directory to write into, as a daemon would watch it. */
-  projectsDir: string;
+  /** Claude Code projects directory to write into, as a daemon would watch it. */
+  projectsDir?: string | undefined;
+  /** Codex sessions directory to write into, as a daemon would watch it. */
+  codexDir?: string | undefined;
   /** Recorded gaps are divided by this. */
   speed: number;
   /** Simulated user: replaces the home-directory username in paths, and labels the run. */
@@ -27,8 +30,12 @@ export type ReplayOptions = {
 export type PlannedLine = { delayMs: number; text: string };
 
 export type ReplayPlan = {
+  agent: AgentId;
   sessionId: string;
-  /** `<projectsDir>/<slug>/<sessionId>.jsonl` */
+  /**
+   * Claude Code: `<projectsDir>/<slug>/<sessionId>.jsonl`.
+   * Codex: `<codexDir>/YYYY/MM/DD/rollout-<start time>-<threadId>.jsonl`.
+   */
   file: string;
   lines: PlannedLine[];
 };
@@ -44,15 +51,23 @@ const HOME_USER = /(Users[\\/]+|Users-|\/home\/+)([^\\/\s"'-]+)/g;
  * line's delay and `timestamp` follow the recorded timestamps divided by
  * `speed`. Timestamps that go backwards are kept relative (written straight
  * away). Lines that aren't JSON are written unchanged, as Claude Code might.
+ * The fixture's agent is sniffed from its first record; its directory option
+ * must be set.
  */
 export function planReplay(
   fixtureText: string,
-  options: Pick<ReplayOptions, "projectsDir" | "speed" | "as" | "maxGapMs"> & {
+  options: Pick<ReplayOptions, "projectsDir" | "codexDir" | "speed" | "as" | "maxGapMs"> & {
     seed: string;
     startMs: number;
   },
 ): ReplayPlan {
   if (!(options.speed > 0)) throw new RangeError("speed must be positive");
+  const agent = sniffAgent(fixtureText) ?? "claude-code";
+  const root = agent === "codex" ? options.codexDir : options.projectsDir;
+  if (root === undefined) {
+    const flag = agent === "codex" ? "--codex-dir" : "--projects-dir";
+    throw new Error(`this fixture is a ${agent} session: replaying it needs ${flag}`);
+  }
   const uuids = new Map<string, string>();
   const mapUuid = (uuid: string) => {
     const key = uuid.toLowerCase();
@@ -106,18 +121,35 @@ export function planReplay(
       if (sessionId === undefined && typeof value.sessionId === "string")
         sessionId = value.sessionId;
       if (cwd === undefined && typeof value.cwd === "string") cwd = value.cwd;
+      // Codex: the thread id is in the first session_meta.
+      const payload = value.payload;
+      if (sessionId === undefined && value.type === "session_meta" && isObject(payload)) {
+        if (typeof payload.id === "string") sessionId = payload.id;
+      }
     }
     lines.push({ delayMs: Math.round(elapsed), text: JSON.stringify(value) });
   }
 
   const session = sessionId ?? derivedUuid(options.seed, "session");
+  if (agent === "codex") {
+    return { agent, sessionId: session, file: rolloutPath(root, session, options.startMs), lines };
+  }
   const slug = cwd ? cwd.replace(/[^A-Za-z0-9]/g, "-") : "replay";
-  return { sessionId: session, file: join(options.projectsDir, slug, `${session}.jsonl`), lines };
+  return { agent, sessionId: session, file: join(root, slug, `${session}.jsonl`), lines };
+}
+
+/** Where Codex would put a new thread's rollout, by its start time (UTC here). */
+function rolloutPath(codexDir: string, threadId: string, startMs: number): string {
+  const iso = new Date(startMs).toISOString();
+  const [y = "", m = "", d = ""] = iso.slice(0, 10).split("-");
+  const time = iso.slice(0, 19).replace(/:/g, "-");
+  return join(codexDir, y, m, d, `rollout-${time}-${threadId}.jsonl`);
 }
 
 /**
- * `baton replay`: writes a fixture into a fresh transcript file at its recorded
- * pace, so a watching daemon sees what looks like a live Claude Code session.
+ * `baton replay`: writes a fixture into a fresh session log at its recorded
+ * pace, so a watching daemon sees what looks like a live Claude Code or Codex
+ * session.
  * Resolves when every line is written (or rejects with the signal's reason).
  */
 export async function runReplay(options: ReplayOptions): Promise<ReplayPlan> {
@@ -127,6 +159,7 @@ export async function runReplay(options: ReplayOptions): Promise<ReplayPlan> {
   const startMs = now();
   const plan = planReplay(text, {
     projectsDir: options.projectsDir,
+    codexDir: options.codexDir,
     speed: options.speed,
     as: options.as,
     maxGapMs: options.maxGapMs,
@@ -136,7 +169,12 @@ export async function runReplay(options: ReplayOptions): Promise<ReplayPlan> {
   const log = options.logger.child({ session: plan.sessionId, as: options.as });
   const last = plan.lines.at(-1);
   log.info(
-    { file: plan.file, lines: plan.lines.length, seconds: Math.round((last?.delayMs ?? 0) / 1000) },
+    {
+      agent: plan.agent,
+      file: plan.file,
+      lines: plan.lines.length,
+      seconds: Math.round((last?.delayMs ?? 0) / 1000),
+    },
     "replaying transcript",
   );
 

@@ -1,12 +1,12 @@
 # Baton daemon (v0)
 
-`baton start` tails Claude Code transcripts and streams their `BatonEvent`s
+`baton start` tails Claude Code transcripts and Codex rollouts and streams their `BatonEvent`s
 (see [spec.md](spec.md)) to local viewers over WebSocket. It listens on
 `127.0.0.1` only.
 
 ```sh
 pnpm build
-pnpm baton start [--port 7777] [--projects-dir ~/.claude/projects]
+pnpm baton start [--port 7777] [--projects-dir ~/.claude/projects] [--codex-dir ~/.codex/sessions]
 npx wscat -c ws://127.0.0.1:7777/ws
 ```
 
@@ -28,8 +28,15 @@ TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local)
 
 - `src/sink.ts`: `EventSink { publish(events, { backlog? }) }`. The watcher
   only knows this interface.
-- `src/watcher.ts`: chokidar over the projects dir (`*.jsonl`, any depth).
-- `src/tail.ts`: one file's byte offset and its incremental parser.
+- `src/sources.ts`: one `LogSource { agent, kind, dir, detect }` per entry in
+  core's `AGENT_REGISTRY`; which files belong to which session (a Codex thread's
+  segment files share one).
+- `src/watcher.ts`: chokidar over every source's dir (any depth), files
+  filtered by the adapter's `detect`.
+- `src/tail.ts`: one session's files (usually one), each with its byte offset,
+  and the adapter's incremental parser.
+- `src/log-file.ts`: opens a log, plain or `.zst` (decompressed whole, Node
+  22.15+).
 - `src/lines.ts`: splits bytes into lines and holds back a trailing partial
   line as bytes, so a UTF-8 character cut between writes survives.
 - `src/state-store.ts`: per-file `{ offset, ino }`, saved (debounced, atomic
@@ -39,6 +46,9 @@ TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local)
   `seq` and `epoch`. `MemoryEventLog` (the default) keeps them in memory up to a
   byte budget.
 - `src/hub.ts`: subscriptions, replay with backpressure, `/sessions` data.
+- `src/event-log.ts`: the hub's in-memory log. It drops an event whose `id` it
+  already holds **for the same session**; ids are only unique per session (a
+  forked Codex thread repeats its parent's item ids).
 - `src/server.ts`: HTTP/WebSocket routes and the local-only request check
   (or, for `baton serve`, the team token check and `/ingest`).
 - `src/merge.ts`: `mergeByTime`, which interleaves sessions by timestamp for
@@ -47,6 +57,11 @@ TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local)
 
 ## Watching
 
+- **Sources.** The Claude Code (`--projects-dir`) and Codex (`--codex-dir`)
+  directories come from the core adapter registry. A missing directory is
+  skipped; the daemon refuses to start only if none exists. Codex specifics
+  (segments, `.zst`) are in [spec.md](spec.md#codex-adapter-codex) and
+  [codex-source.md](codex-source.md).
 - **Start-up.** Every transcript is opened. A file with a saved offset (same
   inode, not shrunk) resumes from it; an unknown file starts at its end. A
   session is _active_ if it changed in the last `--active-minutes` (default
@@ -73,7 +88,10 @@ TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local)
 - **Windows.** Paths are compared case-insensitively. Reads retry briefly on
   `EBUSY`/`EPERM`/`EACCES`. `--poll` is there for network drives or file
   systems where native events don't arrive.
-- Deleted files are forgotten, both in memory and in the state file.
+- Deleted files are forgotten, both in memory and in the state file, except a
+  Codex `x.jsonl` replaced by `x.jsonl.zst`: the session continues in the `.zst`
+  file at the same offset. An idle `.zst` session isn't decompressed until its
+  thread changes.
 
 ## WebSocket protocol
 
@@ -125,8 +143,10 @@ code 1013. An invalid query closes it with 1008.
 
 ## HTTP
 
-- `GET /sessions` → `{ sessions: [{ sessionId, projectPath, projectName,
-  lastActivity, events }] }`. These are sessions the hub received an event for
+- `GET /sessions` → `{ sessions: [{ sessionId, agent, projectPath, projectName,
+  lastActivity, events, source? }] }`. `agent` (`claude-code` or `codex`) comes
+  from the session's first event; clients default it to `claude-code` when an
+  older server leaves it out. These are sessions the hub received an event for
   within `--active-minutes`, newest `lastActivity` (transcript `ts`) first.
   `events` counts what the hub received since it started, backlog included.
 - `GET /health` → `{ ok, epoch, seq }`.

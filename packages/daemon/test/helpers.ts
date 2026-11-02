@@ -29,7 +29,10 @@ export function record(session: string, kind: "user" | "assistant", text: string
   });
 }
 
-/** A temp projects dir with one project folder, removed by `cleanup`. */
+/**
+ * A temp projects dir with one project folder, plus a Codex sessions dir that
+ * doesn't exist yet (so tests never read the real `~/.codex`). Removed by `cleanup`.
+ */
 export async function tempProjects() {
   const root = await mkdtemp(join(tmpdir(), "baton-daemon-"));
   const projectsDir = join(root, "projects");
@@ -38,6 +41,7 @@ export async function tempProjects() {
   return {
     root,
     projectsDir,
+    codexDir: join(root, "codex"),
     stateFile: join(root, "state.json"),
     transcript: (session: string) => join(project, `${session}.jsonl`),
     append: (file: string, data: string) => appendFile(file, data),
@@ -46,7 +50,7 @@ export async function tempProjects() {
 }
 
 export function start(
-  dirs: { projectsDir: string; stateFile: string },
+  dirs: { projectsDir: string; codexDir: string; stateFile: string },
   overrides: Parameters<typeof resolveConfig>[0] = {},
 ): Promise<Daemon> {
   const config = resolveConfig({ port: 0, logLevel: "silent", ...dirs, ...overrides });

@@ -1,7 +1,8 @@
-// pnpm demo — six simulated teammates on this machine, no Docker, no Claude.
+// pnpm demo — eight simulated teammates (six Claude Code, two Codex) on this
+// machine, no Docker, no Claude, no Codex.
 //
-// Starts `baton serve`, then for each of alice … frank: its own fake projects
-// dir, a `baton start --server … --name <name>` daemon watching it, and a
+// Starts `baton serve`, then for each of alice … heidi: its own fake projects
+// and Codex sessions dirs, a `baton start --server … --name <name>` daemon watching it, and a
 // `baton replay` writing a fixture into it at the recorded pace. Partway
 // through, bob's daemon is killed and restarted (a reconnect with a resend).
 // When every session is complete it checks that each event arrived exactly
@@ -60,6 +61,8 @@ function daemon(m) {
     m.name,
     "--projects-dir",
     join(dir, "projects"),
+    "--codex-dir",
+    join(dir, "codex"),
     "--state-file",
     join(dir, "state.json"),
     "--queue-dir",
@@ -75,6 +78,8 @@ function replay(m) {
     join(FIXTURES, m.fixture),
     "--projects-dir",
     join(work, m.name, "projects"),
+    "--codex-dir",
+    join(work, m.name, "codex"),
     "--speed",
     args.speed,
     "--max-gap",
@@ -113,11 +118,12 @@ log(`viewer: ${BASE_URL}/?token=${TOKEN}`);
 const daemons = new Map();
 for (const m of FLEET) {
   mkdirSync(join(work, m.name, "projects"), { recursive: true });
+  mkdirSync(join(work, m.name, "codex"), { recursive: true });
   daemons.set(m.name, daemon(m));
 }
 await sleep(1500); // let the watchers start before the transcripts appear
 for (const m of FLEET) replay(m);
-log(`six replays running at ${args.speed} (pauses capped at ${args["max-gap"]}s)`);
+log(`${FLEET.length} replays running at ${args.speed} (pauses capped at ${args["max-gap"]}s)`);
 
 const expected = expectedKinds();
 
