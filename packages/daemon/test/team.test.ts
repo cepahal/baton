@@ -272,6 +272,7 @@ describe("team server", () => {
       backlog: "all" as const,
       bufferMb: 1,
       activeMinutes: 120,
+      recent: 0,
       poll: false,
       logLevel: "silent" as const,
       webDir: dirs.root,

@@ -7,6 +7,8 @@ import { z } from "zod";
 export const DEFAULT_PORT = 7777;
 /** Memory for replayable events; roughly a few hundred long sessions. */
 export const DEFAULT_BUFFER_MB = 256;
+/** Sessions per agent shown at startup regardless of age. */
+export const DEFAULT_RECENT = 5;
 /** The daemon never listens on anything but loopback. */
 export const HOST = "127.0.0.1";
 /** `baton serve` listens on every interface: teammates connect from other machines. */
@@ -35,6 +37,8 @@ export const DaemonConfig = z.object({
   bufferSize: int(1).optional(),
   /** Minutes since a session's last change for it to count as active. */
   activeMinutes: int(1),
+  /** Most recent sessions per agent shown at startup, however old. */
+  recent: int(0),
   poll: z.boolean(),
   logLevel: z.enum(LOG_LEVELS),
   /** Built viewer (`apps/web/dist`) served at `/`. */
@@ -116,6 +120,7 @@ export function resolveConfig(
     bufferMb: input.bufferMb ?? DEFAULT_BUFFER_MB,
     bufferSize: input.bufferSize,
     activeMinutes: input.activeMinutes ?? 120,
+    recent: input.recent ?? DEFAULT_RECENT,
     poll: input.poll ?? false,
     logLevel: input.logLevel ?? "info",
     webDir: input.webDir ?? defaultWebDir(),

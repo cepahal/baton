@@ -1,4 +1,4 @@
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, utimesSync, writeFileSync } from "node:fs";
 import type { BatonEvent } from "@baton/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { logSources } from "../src/sources.js";
@@ -54,5 +54,70 @@ describe("TranscriptWatcher startup", () => {
     await until(
       () => events.filter((e) => e.sessionId === SESSION_B && e.kind === "prompt").length === 2,
     );
+  });
+
+  it("publishes each agent's most recent sessions at startup even when they are old", async () => {
+    const dirs = await tempProjects();
+    cleanup = dirs.cleanup;
+    const day = 24 * 60 * 60;
+    const nowS = Date.now() / 1000;
+    for (const [session, age] of [
+      [SESSION_A, 3 * day],
+      [SESSION_B, 2 * day],
+    ] as const) {
+      const path = dirs.transcript(session);
+      writeFileSync(
+        path,
+        `${record(session, "user", `hello ${session}`)}
+`,
+      );
+      utimesSync(path, nowS - age, nowS - age);
+    }
+    const events: BatonEvent[] = [];
+    watcher = new TranscriptWatcher({
+      sources: logSources({ "claude-code": dirs.projectsDir, codex: dirs.codexDir }),
+      sink: { publish: (e) => void events.push(...e) },
+      state: await StateStore.load(dirs.stateFile, silent),
+      logger: silent,
+      backlogPerSession: Number.POSITIVE_INFINITY,
+      activeWindowMs: 60_000,
+      recentPerAgent: 1,
+    });
+    await watcher.start();
+    const sessions = new Set(events.filter((e) => e.kind === "prompt").map((e) => e.sessionId));
+    expect([...sessions]).toEqual([SESSION_B]);
+  });
+
+  it("reads appends that raise no change event (Codex Desktop on Windows keeps mtime)", async () => {
+    const dirs = await tempProjects();
+    cleanup = dirs.cleanup;
+    const path = dirs.transcript(SESSION_A);
+    writeFileSync(
+      path,
+      `${record(SESSION_A, "user", "first")}
+`,
+    );
+    const events: BatonEvent[] = [];
+    watcher = new TranscriptWatcher({
+      sources: logSources({ "claude-code": dirs.projectsDir, codex: dirs.codexDir }),
+      sink: { publish: (e) => void events.push(...e) },
+      state: await StateStore.load(dirs.stateFile, silent),
+      logger: silent,
+      backlogPerSession: Number.POSITIVE_INFINITY,
+      activeWindowMs: 60_000,
+      // Polling that never fires stands in for change events that never come.
+      poll: true,
+      pollIntervalMs: 60 * 60_000,
+      sweepIntervalMs: 50,
+    });
+    await watcher.start();
+    // Past the startup read's follow-up checks (RECHECK_MS).
+    await new Promise((r) => setTimeout(r, 1000));
+    appendFileSync(
+      path,
+      `${record(SESSION_A, "user", "second")}
+`,
+    );
+    await until(() => events.filter((e) => e.kind === "prompt").length === 2);
   });
 });

@@ -53,7 +53,7 @@ export function start(
   dirs: { projectsDir: string; codexDir: string; stateFile: string },
   overrides: Parameters<typeof resolveConfig>[0] = {},
 ): Promise<Daemon> {
-  const config = resolveConfig({ port: 0, logLevel: "silent", ...dirs, ...overrides });
+  const config = resolveConfig({ port: 0, logLevel: "silent", recent: 0, ...dirs, ...overrides });
   return startDaemon(config, silent);
 }
 

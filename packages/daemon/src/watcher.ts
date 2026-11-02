@@ -24,11 +24,21 @@ export type WatcherOptions = {
   backlogPerSession: number;
   /** A file modified this recently counts as an active session at startup. */
   activeWindowMs: number;
+  /**
+   * The N most recently modified sessions of each agent also count as active
+   * at startup, however old. Default 0.
+   */
+  recentPerAgent?: number;
   /** Sessions read at once during startup. Default 8. */
   concurrency?: number;
   /** Poll instead of using native file events (network drives, some VMs). */
   poll?: boolean;
   pollIntervalMs?: number;
+  /**
+   * How often every followed file's size is checked, as a backstop for missed
+   * change events (0 = never). Default 1000.
+   */
+  sweepIntervalMs?: number;
   now?: () => number;
 };
 
@@ -55,6 +65,8 @@ const RETRIES = 3;
  * as long as those checks keep finding new bytes.
  */
 const RECHECK_MS = 150;
+/** See `sweepIntervalMs`. */
+const SWEEP_MS = 1000;
 
 /**
  * Watches every agent's session-log directory and publishes new events to a
@@ -69,6 +81,7 @@ export class TranscriptWatcher {
   readonly #log: Logger;
   #sources: LogSource[] = [];
   #watcher: FSWatcher | undefined;
+  #sweep: NodeJS.Timeout | undefined;
   #closed = false;
 
   constructor(readonly options: WatcherOptions) {
@@ -103,7 +116,10 @@ export class TranscriptWatcher {
       this.#log.warn("this Node.js has no zstd support (needs 22.15+): skipping .zst session logs");
     }
     const groups = this.#group(files);
-    const opened = await Promise.all(groups.map((g) => this.#limit(() => this.#open(g))));
+    const recent = await this.#mostRecent(groups);
+    const opened = await Promise.all(
+      groups.map((g) => this.#limit(() => this.#open(g, recent.has(g.key)))),
+    );
     this.#pruneState(new Set(files.map(logKey)));
 
     const backlog = opened.flatMap((r) => r.backlog);
@@ -150,12 +166,15 @@ export class TranscriptWatcher {
     const late = now.filter((path) => !this.#tailFor(path)?.has(path));
     if (late.length > 0) this.#watcher?.add([...new Set(late.map((path) => dirname(path)))]);
     for (const path of new Set([...known, ...now])) this.#schedule(path);
+    const sweepMs = this.options.sweepIntervalMs ?? SWEEP_MS;
+    if (sweepMs > 0) this.#sweep = setInterval(() => void this.#sweepSizes(), sweepMs);
     this.#log.info({ dirs }, "watching for transcript changes");
   }
 
   /** Stops watching and waits for in-flight reads. The caller saves offsets. */
   async close(): Promise<void> {
     this.#closed = true;
+    clearInterval(this.#sweep);
     for (const job of this.#jobs.values()) clearTimeout(job.recheck);
     await this.#watcher?.close();
     await this.idle();
@@ -168,6 +187,35 @@ export class TranscriptWatcher {
       if (running.length === 0) return;
       await Promise.all(running.map((j) => j.idle));
     }
+  }
+
+  /**
+   * Schedules a read of every followed file whose size differs from what was
+   * read. Codex Desktop appends to a rollout it holds open, and on Windows that
+   * leaves the file's mtime unchanged, so chokidar drops the change events.
+   */
+  async #sweepSizes(): Promise<void> {
+    const parts = [...this.#tails.values()].flatMap((t) => t.parts).filter((p) => !p.sealed);
+    await Promise.all(
+      parts.map(async (part) => {
+        const size = await stat(part.path).then(
+          (s) => s.size,
+          () => undefined,
+        );
+        if (
+          size !== undefined &&
+          size !== part.offset &&
+          !this.#jobs.get(this.#keyOf(part.path))?.running
+        ) {
+          this.#schedule(part.path);
+        }
+      }),
+    );
+  }
+
+  #keyOf(path: string): string {
+    const source = this.#sourceOf(path);
+    return source ? sessionKey(source, path) : path;
   }
 
   #sourceOf(path: string): LogSource | undefined {
@@ -215,13 +263,13 @@ export class TranscriptWatcher {
    * are only remembered, and parsed the first time they change. Compressed
    * Codex logs of idle sessions aren't even decompressed.
    */
-  async #open({ key, source, paths }: Group): Promise<Opened> {
+  async #open({ key, source, paths }: Group, forceActive = false): Promise<Opened> {
     try {
       const now = (this.options.now ?? Date.now)();
       const recent = await Promise.all(
         paths.map(async (p) => (await stat(p)).mtimeMs >= now - this.options.activeWindowMs),
       );
-      let active = recent.some(Boolean);
+      let active = forceActive || recent.some(Boolean);
       let resumed = false;
       const parts: { path: string; options: PartOptions }[] = [];
       for (const path of paths) {
@@ -259,6 +307,34 @@ export class TranscriptWatcher {
       this.#log.warn({ files: paths, err }, "could not read transcript at startup");
       return { active: false, backlog: [], missed: [] };
     }
+  }
+
+  /** Keys of the `recentPerAgent` most recently modified sessions of each agent. */
+  async #mostRecent(groups: Group[]): Promise<Set<string>> {
+    const n = this.options.recentPerAgent ?? 0;
+    if (n <= 0) return new Set();
+    const dated = await Promise.all(
+      groups.map(async (g) => {
+        const times = await Promise.all(
+          g.paths.map((p) =>
+            stat(p).then(
+              (s) => s.mtimeMs,
+              () => 0,
+            ),
+          ),
+        );
+        return { g, mtime: Math.max(0, ...times) };
+      }),
+    );
+    const keys = new Set<string>();
+    for (const source of this.#sources) {
+      const newest = dated
+        .filter((d) => d.g.source.agent === source.agent)
+        .sort((a, b) => b.mtime - a.mtime)
+        .slice(0, n);
+      for (const d of newest) keys.add(d.g.key);
+    }
+    return keys;
   }
 
   #tail(source: LogSource, path: string, options: PartOptions): TranscriptTail {

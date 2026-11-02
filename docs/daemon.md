@@ -11,7 +11,7 @@ npx wscat -c ws://127.0.0.1:7777/ws
 ```
 
 `baton start --help` lists every option: `--state-file`, `--backlog`,
-`--buffer-mb`, `--buffer-size`, `--active-minutes`, `--poll`, `--log-level`,
+`--buffer-mb`, `--buffer-size`, `--active-minutes`, `--recent`, `--poll`, `--log-level`,
 `--web-dir`. Logs are pino JSON on stdout.
 
 With `--server`, the daemon forwards to a team server instead of serving
@@ -65,7 +65,8 @@ TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local)
 - **Start-up.** Every transcript is opened. A file with a saved offset (same
   inode, not shrunk) resumes from it; an unknown file starts at its end. A
   session is _active_ if it changed in the last `--active-minutes` (default
-  120) or grew while the daemon was down. For each active session the daemon
+  120), is one of its agent's `--recent` (default 5) most recently modified
+  sessions, or grew while the daemon was down. For each active session the daemon
   parses the history up to the saved offset and publishes **all of it (or the
   last `--backlog <n>` events) with `backlog: true`**, then publishes anything
   written while it was down as normal events.
@@ -79,6 +80,10 @@ TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local)
   one for the same file, with no trailing event. After each read the file is
   checked again 150 ms later, and keeps being checked while those checks find
   new bytes, so the end of a burst isn't left waiting for the next write.
+- **Appends with no change event.** Codex Desktop appends to a rollout it
+  keeps open, and on Windows that leaves the file's mtime unchanged, so
+  chokidar reports nothing. Every second the watcher compares each followed
+  file's size with its read offset and reads any that differ.
 - **New files** are new sessions; they're read from the start.
 - **Truncation and replacement.** If the file is smaller than the offset or its
   inode changed, it's read again from byte 0 with a fresh parser (so event

@@ -54,6 +54,7 @@ export async function startDaemon(config: DaemonConfig, logger: Logger): Promise
     logger: logger.child({ component: "watcher" }),
     backlogPerSession: config.backlog === "all" ? Number.POSITIVE_INFINITY : config.backlog,
     activeWindowMs,
+    recentPerAgent: config.recent,
     poll: config.poll,
   });
   try {

@@ -44,6 +44,7 @@ export async function startForwarder(
     logger: logger.child({ component: "watcher" }),
     backlogPerSession: config.backlog === "all" ? Number.POSITIVE_INFINITY : config.backlog,
     activeWindowMs: config.activeMinutes * 60_000,
+    recentPerAgent: config.recent,
     poll: config.poll,
   });
   try {

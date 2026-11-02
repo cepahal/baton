@@ -6,6 +6,7 @@ import {
   DEFAULT_BUFFER_MB,
   DEFAULT_PORT,
   DEFAULT_QUEUE_MB,
+  DEFAULT_RECENT,
   MIN_TOKEN_LENGTH,
   resolveConfig,
   resolveServeConfig,
@@ -31,6 +32,7 @@ http://127.0.0.1:<port>, or with --server sends them to a team server.
   --buffer-mb <n>       Memory for events kept for viewers (default ${DEFAULT_BUFFER_MB})
   --buffer-size <n>     Also cap the number of events kept (default no cap)
   --active-minutes <n>  How recent a change makes a session active (default 120)
+  --recent <n>          Also show each agent's n most recent sessions, however old (default ${DEFAULT_RECENT})
   --poll                Poll files instead of using native file events
   --web-dir <dir>       Built viewer to serve at / (default apps/web/dist)
   --server <url>        Team server (ws://host:port); the token comes from BATON_TOKEN
@@ -126,6 +128,7 @@ export function parseCli(
           bufferMb: values["buffer-mb"],
           bufferSize: values["buffer-size"],
           activeMinutes: values["active-minutes"],
+          recent: values.recent,
           poll: values.poll,
           logLevel: values["log-level"],
           webDir: values["web-dir"],
@@ -237,6 +240,7 @@ function parse(argv: readonly string[]) {
       "buffer-mb": { type: "string" },
       "buffer-size": { type: "string" },
       "active-minutes": { type: "string" },
+      recent: { type: "string" },
       poll: { type: "boolean" },
       "log-level": { type: "string" },
       "web-dir": { type: "string" },
