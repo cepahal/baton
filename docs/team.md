@@ -66,6 +66,10 @@ rules and an `/ingest` route.
   carry `repo` and `domain`; `PUT /sessions/:id/domain` (token required) sets
   a manual label on the team server.
 - `/events`, `/ws` and `/sessions` work as in local mode.
+- Sticky notes (`/notes`, `/blobs`) are kept on the team server, in
+  `team-notes.json` and `team-blobs/`, so every machine sees the same notes.
+  Daemons fetch a handed-off note's files with their token. See
+  [notes.md](notes.md).
 
 ### Access
 

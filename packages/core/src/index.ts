@@ -98,6 +98,28 @@ export {
   HandoffSummary,
   HandoffsResponse,
 } from "./handoff/schema.js";
+export { formatBytes, type NoteHeader, renderNote } from "./notes/render.js";
+export {
+  BlobId,
+  BlobResponse,
+  isInlineImage,
+  isPreviewableText,
+  NOTE_FILE_MAX_BYTES,
+  NOTE_FILES_MAX,
+  NOTE_ID_PATTERN,
+  NOTE_TEXT_MAX,
+  NOTES_MAX,
+  Note,
+  NoteColor,
+  NoteCreate,
+  NoteFile,
+  NoteId,
+  NotePatch,
+  NoteResponse,
+  NotesFile,
+  NotesResponse,
+  safeFileName,
+} from "./notes/schema.js";
 export {
   AckMessage,
   CanvasKey,
@@ -121,6 +143,7 @@ export {
   IngestClientMessage,
   IngestQuery,
   IngestServerMessage,
+  NotesMessage,
   PROTOCOL_VERSION,
   PublishMessage,
   projectName,

@@ -100,7 +100,11 @@ describe("Hub canvas", () => {
     const quiet = new FakeSocket();
     h.connect(quiet, { session: "all" });
     // Always a snapshot, even empty, so a reconnecting viewer drops removed nodes.
-    expect(quiet.sent.at(-1)).toEqual({ type: "canvas", positions: {}, snapshot: true });
+    expect(quiet.sent.find((m) => m.type === "canvas")).toEqual({
+      type: "canvas",
+      positions: {},
+      snapshot: true,
+    });
     expect(quiet.canvas()).toEqual([{}]);
 
     h.moveCanvasNodes({ "session:x": { x: 10, y: 20 } });
@@ -108,7 +112,7 @@ describe("Hub canvas", () => {
 
     const late = new FakeSocket();
     h.connect(late, { session: SESSION_A });
-    expect(late.sent.map((m) => m.type).slice(0, 2)).toEqual(["hello", "canvas"]);
+    expect(late.sent.map((m) => m.type).slice(0, 3)).toEqual(["hello", "canvas", "notes"]);
     expect(late.canvas()).toEqual([{ "session:x": { x: 10, y: 20 } }]);
 
     // A move that changes nothing isn't broadcast.

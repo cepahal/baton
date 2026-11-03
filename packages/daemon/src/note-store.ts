@@ -1,0 +1,154 @@
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { NOTES_MAX, type Note, type NoteCreate, type NotePatch, NotesFile } from "@baton/core";
+import type { Logger } from "pino";
+
+/** Ids: "n" + 10 base-36 characters. */
+export function newNoteId(): string {
+  const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
+  let id = "n";
+  for (const byte of randomBytes(10)) id += alphabet[byte % 36];
+  return id;
+}
+
+export type NoteStoreOptions = {
+  /** Where notes are saved (debounced). Default: in memory only. */
+  file?: string;
+  logger?: Logger;
+  saveDelayMs?: number;
+  now?: () => Date;
+  newId?: () => string;
+};
+
+/**
+ * The canvas's sticky notes, shared by everyone on the hub. A JSON file, not a
+ * database: notes are few (NOTES_MAX) and small; their files live in the
+ * BlobStore.
+ */
+export class NoteStore {
+  readonly #notes = new Map<string, Note>();
+  #timer: ReturnType<typeof setTimeout> | undefined;
+  #saving: Promise<void> = Promise.resolve();
+
+  constructor(readonly options: NoteStoreOptions = {}) {}
+
+  /** Reads the saved file, if any. A missing or corrupt file starts empty. */
+  async load(): Promise<void> {
+    const file = this.options.file;
+    if (file === undefined) return;
+    try {
+      const parsed = NotesFile.safeParse(JSON.parse(await readFile(file, "utf8")));
+      if (parsed.success) for (const n of parsed.data) this.#notes.set(n.id, n);
+      else this.options.logger?.warn({ file }, "ignoring an invalid notes file");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        this.options.logger?.warn({ err, file }, "could not read the notes file");
+      }
+    }
+  }
+
+  all(): Note[] {
+    return [...this.#notes.values()];
+  }
+
+  get(id: string): Note | undefined {
+    return this.#notes.get(id);
+  }
+
+  get size(): number {
+    return this.#notes.size;
+  }
+
+  /** A new note, or undefined when the canvas already holds NOTES_MAX. */
+  create(body: NoteCreate): Note | undefined {
+    if (this.#notes.size >= NOTES_MAX) return undefined;
+    const at = this.#now();
+    const note: Note = {
+      id: (this.options.newId ?? newNoteId)(),
+      x: body.x,
+      y: body.y,
+      color: body.color,
+      text: body.text ?? "",
+      files: [],
+      ...(body.author === undefined ? {} : { author: body.author }),
+      createdAt: at,
+      updatedAt: at,
+    };
+    this.#notes.set(note.id, note);
+    this.#scheduleSave();
+    return note;
+  }
+
+  /** The changed note, the same note when nothing changed, or undefined if it's gone. */
+  update(id: string, patch: NotePatch): { note: Note; changed: boolean } | undefined {
+    const prev = this.#notes.get(id);
+    if (!prev) return undefined;
+    const next: Note = { ...prev };
+    if (patch.x !== undefined) next.x = patch.x;
+    if (patch.y !== undefined) next.y = patch.y;
+    if (patch.color !== undefined) next.color = patch.color;
+    if (patch.text !== undefined) next.text = patch.text;
+    if (patch.files !== undefined) next.files = patch.files.map((f) => ({ ...f }));
+    if (JSON.stringify(next) === JSON.stringify(prev)) return { note: prev, changed: false };
+    next.updatedAt = this.#now();
+    this.#notes.set(id, next);
+    this.#scheduleSave();
+    return { note: next, changed: true };
+  }
+
+  /** Takes a note down; returns it, or undefined if it wasn't there. */
+  remove(id: string): Note | undefined {
+    const note = this.#notes.get(id);
+    if (!note) return undefined;
+    this.#notes.delete(id);
+    this.#scheduleSave();
+    return note;
+  }
+
+  /** Every file some note holds. */
+  blobsInUse(): Set<string> {
+    const out = new Set<string>();
+    for (const n of this.#notes.values()) for (const f of n.files) out.add(f.sha256);
+    return out;
+  }
+
+  /** Writes any pending change now. */
+  async flush(): Promise<void> {
+    if (this.#timer !== undefined) {
+      clearTimeout(this.#timer);
+      this.#timer = undefined;
+      this.#save();
+    }
+    await this.#saving;
+  }
+
+  #now(): string {
+    return (this.options.now?.() ?? new Date()).toISOString();
+  }
+
+  #scheduleSave(): void {
+    if (this.options.file === undefined || this.#timer !== undefined) return;
+    this.#timer = setTimeout(() => {
+      this.#timer = undefined;
+      this.#save();
+    }, this.options.saveDelayMs ?? 300);
+    this.#timer.unref?.();
+  }
+
+  #save(): void {
+    const file = this.options.file;
+    if (file === undefined) return;
+    const data = JSON.stringify(this.all());
+    this.#saving = this.#saving.then(async () => {
+      try {
+        await mkdir(dirname(file), { recursive: true });
+        const tmp = `${file}.tmp`;
+        await writeFile(tmp, data);
+        await rename(tmp, file);
+      } catch (err) {
+        this.options.logger?.warn({ err, file }, "could not save the notes file");
+      }
+    });
+  }
+}

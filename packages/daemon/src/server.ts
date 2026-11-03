@@ -35,6 +35,7 @@ import type { HandoffRoute, HandoffService } from "./handoff-service.js";
 import type { Hub } from "./hub.js";
 import type { Inbox } from "./inbox.js";
 import { LOGIN_PAGE } from "./login-page.js";
+import { type NoteRouteOptions, registerNoteRoutes } from "./note-routes.js";
 
 /** Close code for a request the server refuses (RFC 6455 "policy violation"). */
 const CLOSE_POLICY = 1008;
@@ -86,6 +87,8 @@ export type ServerOptions = {
   ingestRoute?: IngestRoute;
   /** This machine's handoff inbox (`/inbox`). Never on a team server. */
   inbox?: Inbox;
+  /** Sticky notes' files (`/notes`, `/blobs`). Without it there are no notes routes. */
+  notes?: Omit<NoteRouteOptions, "hub">;
 };
 
 export type { HandoffRoute };
@@ -93,7 +96,21 @@ export type { HandoffRoute };
 /** Paths a team server answers without a token. */
 const PUBLIC_PATHS = new Set(["/login", "/health"]);
 /** Paths that answer with data (401 when unauthorized) rather than pages (redirect to login). */
-const API_PATHS = new Set(["/sessions", "/events", "/ws", "/ingest", "/handoffs", "/canvas"]);
+const API_PATHS = new Set([
+  "/sessions",
+  "/events",
+  "/ws",
+  "/ingest",
+  "/handoffs",
+  "/canvas",
+  "/notes",
+]);
+/** Prefixes whose subpaths also answer with data. */
+const API_PREFIXES = ["/notes/", "/blobs/", "/handoffs/", "/canvas/", "/sessions/"];
+
+function isApiPath(pathname: string): boolean {
+  return API_PATHS.has(pathname) || API_PREFIXES.some((p) => pathname.startsWith(p));
+}
 
 const LoginBody = z.object({ token: z.string().min(1).max(1024) });
 
@@ -137,7 +154,7 @@ export async function createServer(hub: Hub, logger: Logger, options: ServerOpti
         isAuthorized(req.headers, team.token) &&
         (!daemonOnly || bearerToken(req.headers.authorization) !== undefined);
       if (authorized) return;
-      if (req.method === "GET" && !API_PATHS.has(url.pathname) && !req.headers.upgrade) {
+      if (req.method === "GET" && !isApiPath(url.pathname) && !req.headers.upgrade) {
         return reply.redirect("/login");
       }
       return reply.code(401).send({ error: "missing or wrong team token" });
@@ -231,6 +248,7 @@ export async function createServer(hub: Hub, logger: Logger, options: ServerOpti
   app.get("/health", async () => ({ ok: true, epoch: hub.epoch, seq: hub.seq }));
 
   if (options.handoffs) registerHandoffRoutes(app, options.handoffs);
+  if (options.notes) registerNoteRoutes(app, { hub, ...options.notes });
   // Confirm pages act on this machine, so a server reachable from elsewhere never has them.
   if (options.inbox && !team) registerInboxRoutes(app, options.inbox);
 

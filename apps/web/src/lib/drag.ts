@@ -12,6 +12,8 @@ export const HANDOFF_DRAG_TYPE = "application/x-baton-handoff";
 export const HandoffDrag = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("full"), sessionId: z.string().min(1) }),
   z.object({ kind: z.literal("chat"), sessionId: z.string().min(1) }),
+  /** A sticky note dropped on a session: `sessionId` is the receiver (a note has no source). */
+  z.object({ kind: z.literal("note"), sessionId: z.string().min(1), noteId: z.string().min(1) }),
   z.object({
     kind: z.literal("snippet"),
     sessionId: z.string().min(1),
@@ -24,13 +26,19 @@ type Transfer = Pick<DataTransfer, "setData" | "getData" | "types"> & {
   effectAllowed?: DataTransfer["effectAllowed"];
 };
 
-const DRAG_TEXT = { full: "Baton handoff", chat: "Baton chat", snippet: "Baton snippet" } as const;
+const DRAG_TEXT = {
+  full: "Baton handoff",
+  chat: "Baton chat",
+  snippet: "Baton snippet",
+  note: "Baton sticky note",
+} as const;
 
 /** What a handoff of each kind is called in the viewer. */
 export const HANDOFF_KIND_NAMES = {
   full: "handoff",
   chat: "whole chat",
   snippet: "snippet",
+  note: "sticky note",
 } as const;
 
 export function setHandoffDrag(transfer: Transfer, drag: HandoffDrag): void {

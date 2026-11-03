@@ -1671,3 +1671,454 @@ button.scard-grip {
   border: 0;
   font: inherit;
 }
+
+/* ---- sticky notes ------------------------------------------------------------ */
+
+.note-yellow {
+  --note: #fff1a8;
+  --note-deep: #f5d75e;
+  --note-ink: #5b4a12;
+}
+
+.note-pink {
+  --note: #ffd6e3;
+  --note-deep: #f4a3bd;
+  --note-ink: #6b2840;
+}
+
+.note-orange {
+  --note: #ffd9b3;
+  --note-deep: #f9ac6b;
+  --note-ink: #6a3610;
+}
+
+.note-blue {
+  --note: #d4ecff;
+  --note-deep: #9ccdf5;
+  --note-ink: #1f4566;
+}
+
+.canvas .react-flow__node-note {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* The pad in the canvas's top-left corner: two stacked sheets, the top one curling. */
+.note-pad {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 5;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  transition: transform 0.15s ease;
+}
+
+.note-pad:hover {
+  transform: translateY(-2px) rotate(-3deg);
+}
+
+.note-pad:active {
+  cursor: grabbing;
+  transform: scale(0.96);
+}
+
+.note-pad:focus-visible {
+  outline: 2px solid var(--aqua);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.note-pad-sheet {
+  position: absolute;
+  inset: 4px;
+  border-radius: 3px 3px 12px 3px;
+  background: var(--gloss), linear-gradient(160deg, #fff6c4 0%, #ffe680 60%, #f8d75a 100%);
+  box-shadow:
+    0 4px 8px rgba(120, 90, 10, 0.22),
+    inset 0 -2px 3px rgba(160, 120, 10, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  overflow: hidden;
+}
+
+.note-pad-under {
+  transform: translate(3px, 3px) rotate(4deg);
+  background: linear-gradient(160deg, #ffe680, #f1c94a);
+  box-shadow: 0 3px 6px rgba(120, 90, 10, 0.2);
+}
+
+.note-pad-curl {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 13px;
+  height: 13px;
+  border-top-left-radius: 100% 100%;
+  background: linear-gradient(135deg, #fffbe3 0%, #f3e3a0 45%, #d8b443 100%);
+  box-shadow: -1px -1px 3px rgba(120, 90, 10, 0.25);
+}
+
+/* A note on the canvas. */
+.note {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 14px 22px;
+  border-radius: 4px 4px 26px 4px / 4px 4px 18px 4px;
+  background:
+    var(--gloss), linear-gradient(165deg, var(--note) 0%, var(--note) 62%, var(--note-deep) 135%);
+  color: var(--note-ink);
+  box-shadow:
+    0 10px 18px -6px rgba(38, 50, 74, 0.28),
+    0 2px 4px rgba(38, 50, 74, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.05);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow: hidden;
+  cursor: grab;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+/* The lifted bottom-right corner casts a longer shadow. */
+.react-flow__node-note::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  z-index: -1;
+  width: 55%;
+  height: 22px;
+  background: rgba(38, 50, 74, 0.28);
+  filter: blur(7px);
+  transform: rotate(4deg) skewX(12deg);
+  pointer-events: none;
+}
+
+.react-flow__node-note.dragging .note {
+  transform: rotate(-2deg) scale(1.03);
+  box-shadow:
+    0 18px 28px -8px rgba(38, 50, 74, 0.35),
+    0 3px 6px rgba(38, 50, 74, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.note-curl {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 30px;
+  height: 22px;
+  border-top-left-radius: 100% 100%;
+  background: linear-gradient(
+    140deg,
+    rgba(255, 255, 255, 0.9) 0%,
+    var(--note) 40%,
+    var(--note-deep) 100%
+  );
+  box-shadow: -2px -2px 5px rgba(38, 50, 74, 0.16);
+  pointer-events: none;
+}
+
+.note-text {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 7;
+  -webkit-box-orient: vertical;
+}
+
+.note-hint {
+  margin: auto 0;
+  text-align: center;
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+.note-thumb {
+  display: block;
+  width: 100%;
+  max-height: 88px;
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+}
+
+.note-files {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11.5px;
+}
+
+.note-files li {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-files li.note-more {
+  background: transparent;
+  opacity: 0.7;
+}
+
+.note-edit {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: text;
+}
+
+.note-clip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--note-ink);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.note:hover .note-clip,
+.note-clip:focus-visible {
+  opacity: 0.85;
+}
+
+.note.is-drop-target {
+  outline: 2px dashed var(--note-ink);
+  outline-offset: -6px;
+}
+
+.note.is-armed {
+  transform: rotate(-3deg) scale(0.92);
+  opacity: 0.9;
+}
+
+.react-flow__node-session.is-note-target .scard {
+  box-shadow:
+    var(--clay-shadow-sm),
+    0 0 0 3px rgba(255, 138, 43, 0.65),
+    0 0 18px rgba(255, 138, 43, 0.45);
+}
+
+/* The note opened up. */
+.note-preview {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 18px 20px 26px;
+  border-radius: 6px 6px 40px 6px / 6px 6px 28px 6px;
+  background:
+    var(--gloss), linear-gradient(165deg, var(--note) 0%, var(--note) 70%, var(--note-deep) 140%);
+  color: var(--note-ink);
+  box-shadow:
+    0 24px 48px -12px rgba(38, 50, 74, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  overflow: auto;
+  outline: none;
+}
+
+.note-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.note-preview-meta {
+  flex: 1;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.note-swatches {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.note-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  background: var(--note);
+  box-shadow: 0 1px 3px rgba(38, 50, 74, 0.25);
+  cursor: pointer;
+}
+
+.note-swatch.is-on {
+  box-shadow:
+    0 0 0 2px var(--note-ink),
+    0 1px 3px rgba(38, 50, 74, 0.25);
+}
+
+.note-preview-text {
+  min-height: 140px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.45);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.06);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.note-preview-text:focus {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+}
+
+.note-preview-files {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.note-preview-files li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.note-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 50vh;
+  margin: 0 auto;
+  border-radius: 6px;
+}
+
+.note-preview-pre {
+  max-height: 40vh;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.note-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  font-weight: 600;
+}
+
+.note-file-row span {
+  opacity: 0.7;
+}
+
+.note-file-remove {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.7);
+  color: inherit;
+  cursor: pointer;
+}
+
+.note-preview-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.note-preview-tip {
+  flex: 1;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.note-btn {
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--gloss), rgba(255, 255, 255, 0.75);
+  box-shadow:
+    0 2px 5px rgba(38, 50, 74, 0.18),
+    inset 0 1px 0 #fff;
+  color: var(--note-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.note-btn:active {
+  box-shadow: var(--clay-pressed);
+}
+
+.note-btn.is-danger {
+  color: #b3263c;
+}
+
+.note-preview .handoff-close {
+  background: rgba(255, 255, 255, 0.7);
+}

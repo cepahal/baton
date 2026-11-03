@@ -1,6 +1,7 @@
 import type { CanvasPoint, DomainLabel } from "@baton/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Canvas } from "./components/canvas/Canvas.js";
+import { NotePreview } from "./components/canvas/NotePreview.js";
 import { FeedColumn } from "./components/feed/FeedColumn.js";
 import { HandoffDialog } from "./components/handoff/HandoffDialog.js";
 import { HandoffTray } from "./components/handoff/HandoffTray.js";
@@ -8,6 +9,7 @@ import { Sidebar } from "./components/Sidebar.js";
 import { useCanvasPositions } from "./hooks/useCanvasPositions.js";
 import { useConnection } from "./hooks/useConnection.js";
 import { useHandoffs } from "./hooks/useHandoffs.js";
+import { useNotes } from "./hooks/useNotes.js";
 import { useNow } from "./hooks/useNow.js";
 import { useSessions } from "./hooks/useSessions.js";
 import { useStoreSessionIds } from "./hooks/useStore.js";
@@ -15,6 +17,8 @@ import { saveDomain } from "./lib/canvas-api.js";
 import { buildCanvas, cardKey, dedupe, placeDrop } from "./lib/canvas-model.js";
 import type { HandoffDrag } from "./lib/drag.js";
 import { EventStore } from "./lib/event-store.js";
+import { loadSender } from "./lib/handoff-api.js";
+import { randomNoteColor } from "./lib/notes-api.js";
 import { isLive } from "./lib/time.js";
 
 export function App() {
@@ -23,7 +27,8 @@ export function App() {
   const canvas = useCanvasPositions();
   const [live, setLive] = useState(false);
   const handoffs = useHandoffs(live);
-  const connection = useConnection(store, canvas.onMessage, handoffs.onMessage);
+  const notes = useNotes();
+  const connection = useConnection(store, canvas.onMessage, handoffs.onMessage, notes.onMessage);
   const socketOpen = connection.state.status === "open";
   useEffect(() => setLive(socketOpen), [socketOpen]);
   const seenIds = useStoreSessionIds(store);
@@ -84,10 +89,40 @@ export function App() {
     [],
   );
 
+  const [previewId, setPreviewId] = useState<string | undefined>(undefined);
+  const previewing = notes.notes.find((n) => n.id === previewId);
+  const { create: createNote, update: updateNote, attach: attachNote } = notes;
+  const noteCreate = useCallback(
+    (point: CanvasPoint, files?: File[]) => {
+      const author = loadSender(browserStorage());
+      void createNote({
+        x: point.x,
+        y: point.y,
+        color: randomNoteColor(),
+        ...(author ? { author } : {}),
+      }).then((note) => {
+        if (note && files && files.length > 0) void attachNote(note.id, files);
+      });
+    },
+    [createNote, attachNote],
+  );
+  const noteMove = useCallback(
+    (id: string, p: CanvasPoint) => updateNote(id, { x: p.x, y: p.y }),
+    [updateNote],
+  );
+  const noteText = useCallback(
+    (id: string, text: string) => updateNote(id, { text }),
+    [updateNote],
+  );
+  const noteFiles = useCallback(
+    (id: string, files: File[]) => void attachNote(id, files),
+    [attachNote],
+  );
+
   // A card taken off the canvas closes its panel.
   const shownId = openId !== undefined && onCanvas.includes(openId) ? openId : undefined;
   const openInfo = shownId === undefined ? undefined : byId.get(shownId);
-  const problem = canvas.error ?? domainError;
+  const problem = canvas.error ?? domainError ?? notes.error;
 
   return (
     <div className={`app${shownId ? " has-panel" : ""}`}>
@@ -110,7 +145,32 @@ export function App() {
         onMove={move}
         onDropSession={drop}
         onHandoff={startHandoff}
+        notes={notes.notes}
+        onNoteCreate={noteCreate}
+        onNoteMove={noteMove}
+        onNoteText={noteText}
+        onNoteFiles={noteFiles}
+        onNotePreview={setPreviewId}
       />
+      {previewing && (
+        <NotePreview
+          key={previewing.id}
+          note={previewing}
+          onText={(text) => updateNote(previewing.id, { text })}
+          onColor={(color) => updateNote(previewing.id, { color })}
+          onFiles={(files) => void attachNote(previewing.id, files)}
+          onRemoveFile={(f) =>
+            updateNote(previewing.id, {
+              files: previewing.files.filter((x) => !(x.sha256 === f.sha256 && x.name === f.name)),
+            })
+          }
+          onDelete={() => {
+            notes.remove(previewing.id);
+            setPreviewId(undefined);
+          }}
+          onClose={() => setPreviewId(undefined)}
+        />
+      )}
       <HandoffTray handoffs={handoffs.handoffs} inbox={handoffs.inbox} now={now} />
       {composing && (
         <HandoffDialog
@@ -143,4 +203,12 @@ export function App() {
       )}
     </div>
   );
+}
+
+function browserStorage(): Storage | undefined {
+  try {
+    return typeof localStorage === "undefined" ? undefined : localStorage;
+  } catch {
+    return undefined;
+  }
 }

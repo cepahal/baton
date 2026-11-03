@@ -369,6 +369,8 @@ async function startCommand(
     const server = await startTeamServer(result.config, logger, {
       canvasFile: join(dirname(defaultStateFile()), "team-canvas.json"),
       handoffsFile: join(dirname(defaultStateFile()), "team-handoffs.json"),
+      notesFile: join(dirname(defaultStateFile()), "team-notes.json"),
+      blobsDir: join(dirname(defaultStateFile()), "team-blobs"),
     });
     logger.info(
       { host: result.config.host, port: server.port },

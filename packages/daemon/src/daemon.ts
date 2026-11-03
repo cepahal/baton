@@ -2,12 +2,14 @@ import { stat } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Logger } from "pino";
+import { BlobStore } from "./blob-store.js";
 import { CanvasStore } from "./canvas-store.js";
 import { type DaemonConfig, HOST } from "./config.js";
 import { MemoryEventLog } from "./event-log.js";
 import { type HandoffDeps, localHandoffs } from "./handoff-kit.js";
 import { Hub } from "./hub.js";
 import { modelsFor } from "./models.js";
+import { NoteStore } from "./note-store.js";
 import { RepoResolver } from "./repo-info.js";
 import { RepoTaggingSink } from "./repo-sink.js";
 import { createServer } from "./server.js";
@@ -56,11 +58,18 @@ export async function startDaemon(
     logger: hubLogger,
   });
   await canvas.load();
+  const notes = new NoteStore({
+    file: join(dirname(config.stateFile), "notes.json"),
+    logger: hubLogger,
+  });
+  await notes.load();
+  const blobs = new BlobStore({ dir: join(dirname(config.stateFile), "blobs"), logger: hubLogger });
   const hub = new Hub({
     log,
     activeWindowMs,
     logger: hubLogger,
     canvas,
+    notes,
     ...userField(),
     ...(tieBreaker ? { tieBreaker } : {}),
   });
@@ -72,6 +81,7 @@ export async function startDaemon(
     origin: () => `http://${HOST}:${port}`,
     summarize,
     deps,
+    fetchBlob: (sha256) => blobs.read(sha256),
   });
   const serverLogger = logger.child({ component: "server" });
   const webDir = await viewerDir(config.webDir, serverLogger);
@@ -79,6 +89,7 @@ export async function startDaemon(
     ...(webDir === undefined ? {} : { webDir }),
     handoffs: handoffs.service,
     inbox: handoffs.inbox,
+    notes: { blobs, blobsInUse: () => handoffs.service.attachmentsInUse() },
   });
   await server.listen({ host: HOST, port: config.port });
   const address = server.server.address();
@@ -109,6 +120,7 @@ export async function startDaemon(
       await server.close();
       await state.flush();
       await canvas.flush();
+      await notes.flush();
       await handoffs.store.flush();
     })();
     return closing;

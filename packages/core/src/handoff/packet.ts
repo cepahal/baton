@@ -2,6 +2,8 @@ import { z } from "zod";
 import { compactForLLM } from "../compact.js";
 import type { BatonEvent } from "../event.js";
 import type { TouchedFile } from "../files/schema.js";
+import { renderNote } from "../notes/render.js";
+import type { Note } from "../notes/schema.js";
 import { keepChars, truncateBytes, utf8Length } from "../transcript/truncate.js";
 import { renderChat } from "./chat.js";
 import type { HandoffKind, HandoffParty, HandoffSummary } from "./schema.js";
@@ -126,8 +128,17 @@ export type DraftResult =
 export function buildHandoffDraft(
   events: readonly BatonEvent[],
   header: HandoffHeader,
-  request: { kind: HandoffKind; eventId?: string | undefined; filesTouched: TouchedFile[] },
+  request: {
+    kind: HandoffKind;
+    eventId?: string | undefined;
+    filesTouched: TouchedFile[];
+    note?: Note | undefined;
+  },
 ): DraftResult {
+  if (request.kind === "note") {
+    if (!request.note) return { ok: false, error: "that sticky note is gone" };
+    return { ok: true, kind: "note", markdown: renderNote(header, request.note) };
+  }
   if (request.kind === "snippet") {
     const event = events.find((e) => e.id === request.eventId);
     if (!event) return { ok: false, error: "that event is no longer held; pick a newer one" };

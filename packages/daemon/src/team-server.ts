@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import { BlobStore } from "./blob-store.js";
 import { CanvasStore } from "./canvas-store.js";
 import type { ServeConfig } from "./config.js";
 import { viewerDir } from "./daemon.js";
@@ -8,6 +9,7 @@ import { HandoffService } from "./handoff-service.js";
 import { HandoffStore } from "./handoff-store.js";
 import { Hub } from "./hub.js";
 import { modelsFor } from "./models.js";
+import { NoteStore } from "./note-store.js";
 import { createServer } from "./server.js";
 
 export type TeamServer = {
@@ -26,7 +28,12 @@ export type TeamServer = {
 export async function startTeamServer(
   config: ServeConfig,
   logger: Logger,
-  options: { canvasFile?: string; handoffsFile?: string } = {},
+  options: {
+    canvasFile?: string;
+    handoffsFile?: string;
+    notesFile?: string;
+    blobsDir?: string;
+  } = {},
 ): Promise<TeamServer> {
   const hubLogger = logger.child({ component: "hub" });
   const log = new MemoryEventLog({
@@ -44,7 +51,17 @@ export async function startTeamServer(
     logger: hubLogger,
   });
   await canvas.load();
+  const notes = new NoteStore({
+    ...(options.notesFile === undefined ? {} : { file: options.notesFile }),
+    logger: hubLogger,
+  });
+  await notes.load();
+  const blobs = new BlobStore({
+    ...(options.blobsDir === undefined ? {} : { dir: options.blobsDir }),
+    logger: hubLogger,
+  });
   const hub = new Hub({
+    notes,
     log,
     activeWindowMs: config.activeMinutes * 60_000,
     logger: hubLogger,
@@ -72,6 +89,7 @@ export async function startTeamServer(
     access: { kind: "team", token: config.token },
     handoffs,
     ingestRoute,
+    notes: { blobs, blobsInUse: () => handoffs.attachmentsInUse() },
   });
   await server.listen({ host: config.host, port: config.port });
   const address = server.server.address();
@@ -85,6 +103,7 @@ export async function startTeamServer(
     close: async () => {
       await server.close();
       await canvas.flush();
+      await notes.flush();
       await store.flush();
     },
   };

@@ -8,6 +8,7 @@ import {
   handoffFilePath,
   handoffPrompt,
   type RepoInfo,
+  safeFileName,
 } from "@baton/core";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -58,6 +59,8 @@ export type InboxOptions = {
   /** Remembers the folder chosen per repoId. */
   foldersFile?: string | undefined;
   newToken?: () => string;
+  /** Fetches a sticky note's file by id, for handoffs with attachments. */
+  fetchBlob?: ((sha256: string) => Promise<Uint8Array | undefined>) | undefined;
 };
 
 export type InboxOffer = {
@@ -113,7 +116,7 @@ export class Inbox {
     trim(this.#offers);
     this.#announce(
       `Handoff from ${message.handoff.sender}`,
-      `A ${{ full: "session handoff", chat: "whole chat", snippet: "snippet" }[message.handoff.kind]} for your ${agentName(message.handoff.to.agent)} session. Open to review it.`,
+      `A ${{ full: "session handoff", chat: "whole chat", snippet: "snippet", note: "sticky note" }[message.handoff.kind]} for your ${agentName(message.handoff.to.agent)} session. Open to review it.`,
       `/inbox/${id}`,
     );
   }
@@ -263,13 +266,39 @@ export class Inbox {
     const id = offer.handoff.id;
     const path = join(checkout, ...handoffFilePath(id).split("/"));
     await mkdir(join(checkout, ".baton", "handoffs"), { recursive: true });
-    await writeFile(
-      path,
-      `${offer.handoff.markdown.trimEnd()}
-`,
-    );
+    const saved = await this.#writeAttachments(offer, join(checkout, ".baton", "handoffs", id));
+    await writeFile(path, `${offer.handoff.markdown.trimEnd()}\n${saved}`);
     await this.#excludeFromGit(checkout);
     return path;
+  }
+
+  /**
+   * Writes a note handoff's files into `.baton/handoffs/<id>/` and returns a
+   * markdown section listing where they went (empty without attachments).
+   */
+  async #writeAttachments(offer: InboxOffer, dir: string): Promise<string> {
+    const files = offer.handoff.attachments ?? [];
+    if (files.length === 0) return "";
+    const lines = ["", "## Files saved with this handoff", ""];
+    const used = new Set<string>();
+    for (const f of files) {
+      let name = safeFileName(f.name);
+      for (let n = 2; used.has(name.toLowerCase()); n++) name = `${n}-${safeFileName(f.name)}`;
+      used.add(name.toLowerCase());
+      const rel = `.baton/handoffs/${offer.handoff.id}/${name}`;
+      const bytes = await this.options.fetchBlob?.(f.sha256).catch((err: unknown) => {
+        this.options.logger.warn({ err, id: offer.handoff.id }, "could not fetch a note file");
+        return undefined;
+      });
+      if (!bytes) {
+        lines.push(`- \`${name}\`: _could not be fetched from the hub_`);
+        continue;
+      }
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, name), bytes);
+      lines.push(`- \`${rel}\``);
+    }
+    return `${lines.join("\n")}\n`;
   }
 
   /** Keeps `.baton/` out of `git status` without touching tracked files. */

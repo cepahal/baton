@@ -6,6 +6,7 @@ import { DiskQueue } from "./disk-queue.js";
 import { type HandoffDeps, inboxOptions } from "./handoff-kit.js";
 import { registerInboxRoutes } from "./handoff-routes.js";
 import { Inbox } from "./inbox.js";
+import { remoteBlobFetcher } from "./remote-blobs.js";
 import { RemoteSink } from "./remote-sink.js";
 import { RepoResolver } from "./repo-info.js";
 import { RepoTaggingSink } from "./repo-sink.js";
@@ -46,6 +47,7 @@ export async function startForwarder(
   const inboxLogger = logger.child({ component: "inbox" });
   const inbox = new Inbox({
     ...inboxOptions(dirname(config.stateFile), inboxLogger, deps),
+    fetchBlob: remoteBlobFetcher(remote.server, remote.token),
     origin: () => `http://${HOST}:${inboxPort}`,
     report: (message) => sink?.sendControl(message),
   });

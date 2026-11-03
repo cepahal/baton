@@ -120,6 +120,7 @@ Every query parameter is optional: `session` defaults to `all`, or can be a
 | `gap`    | `fromSeq`, `toSeq`                                           | Before a replay, if those seqs already left the ring buffer                                                                                                                                  |
 | `error`  | `message`                                                    | The client sent something invalid. The connection stays open.                                                                                                                                |
 | `canvas` | `positions` (`{ [key]: { x, y } }`), `removed?`, `snapshot?` | After `hello`, always, with `snapshot: true` and every saved position (the viewer replaces what it held, so nodes removed while it was away disappear); then each change (only what changed) |
+| `notes`  | `notes` (`Note[]`), `removed?`, `snapshot?`                  | After the `canvas` snapshot, with `snapshot: true` and every note; then each change. See [notes.md](notes.md)                                                                                |
 
 **Client → server:** `{ "type": "subscribe", "session": "all" | "<id>",
 "lastSeq"?: n, "epoch"?: "<id>" }` switches subscription on the same socket
@@ -171,6 +172,7 @@ code 1013. An invalid query closes it with 1008.
   (or clears, with `null`) a manual domain label; answers the session's new
   `domain`, 400 for a bad body, 404 for a session the hub doesn't know.
   Overrides live in memory and win over everything else.
+- `/notes` and `/blobs`: sticky notes and their files; see [notes.md](notes.md).
 - `GET /canvas` → `{ positions }`: where viewers put each canvas node.
 - `PUT /canvas/positions` with `{ positions: { [key]: { x, y } }, removed?: [key] }`
   saves moved nodes, forgets removed ones, and broadcasts what changed as a

@@ -4,6 +4,7 @@ import { DomainClassification, DomainLabel } from "./domain/schema.js";
 import { AgentId, BatonEvent } from "./event.js";
 import { TouchedFile } from "./files/schema.js";
 import { Handoff, HandoffId } from "./handoff/schema.js";
+import { Note, NoteId } from "./notes/schema.js";
 
 /** Wire protocol between a Baton hub and its viewers. See docs/spec.md. */
 export const PROTOCOL_VERSION = 1;
@@ -119,6 +120,16 @@ export type CanvasMessage = z.infer<typeof CanvasMessage>;
 export const HandoffMessage = z.object({ type: z.literal("handoff"), handoff: Handoff });
 export type HandoffMessage = z.infer<typeof HandoffMessage>;
 
+/** Sticky notes added or changed, and ones taken down; every note right after `hello`. */
+export const NotesMessage = z.object({
+  type: z.literal("notes"),
+  notes: z.array(Note),
+  removed: z.array(NoteId).optional(),
+  /** Every note (sent on subscribe): replaces what the viewer has. */
+  snapshot: z.boolean().optional(),
+});
+export type NotesMessage = z.infer<typeof NotesMessage>;
+
 export const ServerMessage = z.discriminatedUnion("type", [
   HelloMessage,
   EventMessage,
@@ -126,6 +137,7 @@ export const ServerMessage = z.discriminatedUnion("type", [
   ErrorMessage,
   CanvasMessage,
   HandoffMessage,
+  NotesMessage,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
 

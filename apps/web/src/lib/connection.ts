@@ -3,6 +3,7 @@ import {
   type EventMessage,
   type GapMessage,
   type HandoffMessage,
+  type NotesMessage,
   ServerMessage,
 } from "@baton/core";
 import { type BackoffOptions, backoffDelay, DEFAULT_BACKOFF } from "./backoff.js";
@@ -43,6 +44,8 @@ export type ConnectionOptions = {
   onCanvas?(message: CanvasMessage): void;
   /** A handoff was sent or answered. */
   onHandoff?(message: HandoffMessage): void;
+  /** Sticky notes: every note after connecting, then each change. */
+  onNotes?(message: NotesMessage): void;
   createSocket?: SocketFactory;
   backoff?: BackoffOptions;
   /**
@@ -224,6 +227,9 @@ export class ConnectionManager {
         return;
       case "handoff":
         this.#options.onHandoff?.(message);
+        return;
+      case "notes":
+        this.#options.onNotes?.(message);
         return;
     }
   }

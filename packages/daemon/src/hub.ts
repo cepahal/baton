@@ -17,6 +17,7 @@ import {
 import type { Logger } from "pino";
 import { CanvasStore } from "./canvas-store.js";
 import type { EventLog, LogEntry } from "./event-log.js";
+import { NoteStore } from "./note-store.js";
 import { SessionContracts } from "./session-contracts.js";
 import { type DomainTieBreaker, repoRoot, SessionDomains } from "./session-domains.js";
 import { SessionFiles } from "./session-files.js";
@@ -48,6 +49,8 @@ export type HubOptions = {
   tieBreaker?: DomainTieBreaker;
   /** Shared canvas node positions. Default: in memory only. */
   canvas?: CanvasStore;
+  /** The canvas's sticky notes. Default: in memory only. */
+  notes?: NoteStore;
   /** Shown as the user of sessions without a `source` (the local OS user). */
   user?: string;
 };
@@ -100,6 +103,8 @@ export class Hub implements EventSink {
   readonly #files = new SessionFiles();
   readonly #contracts = new SessionContracts();
   readonly #canvas: CanvasStore;
+  /** The canvas's sticky notes; routes change them and broadcast `notes` messages. */
+  readonly notes: NoteStore;
   readonly #clients = new Set<Client>();
   readonly #maxClientBufferBytes: number;
   readonly #replayHighWater: number;
@@ -114,6 +119,7 @@ export class Hub implements EventSink {
     this.#now = options.now ?? Date.now;
     this.#domains = new SessionDomains(options.tieBreaker);
     this.#canvas = options.canvas ?? new CanvasStore();
+    this.notes = options.notes ?? new NoteStore();
   }
 
   get epoch(): string {
@@ -336,6 +342,7 @@ export class Hub implements EventSink {
     });
     // Always, even empty: a reconnecting viewer must drop nodes removed meanwhile.
     this.#write(client, { type: "canvas", positions: this.#canvas.all(), snapshot: true });
+    this.#write(client, { type: "notes", notes: this.notes.all(), snapshot: true });
 
     const { lastSeq } = request;
     const resumable =

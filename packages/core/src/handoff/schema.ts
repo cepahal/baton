@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentId } from "../event.js";
 import { TouchedFile } from "../files/schema.js";
+import { NoteFile, NoteId } from "../notes/schema.js";
 
 /** Handoff ids are made by the hub: `h` + 10 base-36 characters. See docs/handoff.md. */
 export const HANDOFF_ID_PATTERN = /^h[0-9a-z]{10}$/;
@@ -12,9 +13,10 @@ export const HANDOFF_MARKDOWN_MAX = 256 * 1024;
 /**
  * `full`: a summarized session (dragged by its card header). `snippet`: one
  * feed event. `chat`: the whole conversation, rendered by code from the compact
- * view (dragged from the bottom of a session's feed).
+ * view (dragged from the bottom of a session's feed). `note`: a sticky note
+ * from the canvas, with its files (dragged onto a session; the note stays).
  */
-export const HandoffKind = z.enum(["full", "snippet", "chat"]);
+export const HandoffKind = z.enum(["full", "snippet", "chat", "note"]);
 export type HandoffKind = z.infer<typeof HandoffKind>;
 
 export const HandoffStatus = z.enum(["pending", "accepted", "declined"]);
@@ -55,6 +57,8 @@ export const Handoff = z.object({
   /** The session that should pick it up. */
   to: HandoffParty,
   markdown: z.string().max(HANDOFF_MARKDOWN_MAX),
+  /** Files copied from a sticky note, fetched by the receiver on accept. */
+  attachments: z.array(NoteFile).optional(),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
 });
@@ -68,6 +72,8 @@ export const HandoffDraftRequest = z.object({
   fromSessionId: z.string().min(1),
   toSessionId: z.string().min(1),
   eventId: z.string().min(1).optional(),
+  /** The sticky note of a `note` handoff. */
+  noteId: NoteId.optional(),
   /** Name for the draft's heading; the sent handoff uses `HandoffCreate.sender`. */
   sender: z.string().trim().min(1).max(64).optional(),
 });

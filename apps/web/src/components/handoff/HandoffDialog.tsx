@@ -28,6 +28,7 @@ const DIALOG_TITLES = {
   full: "Hand off session",
   chat: "Hand off the whole chat",
   snippet: "Send snippet",
+  note: "Send sticky note",
 } as const;
 
 export function HandoffDialog({ drag, from, to, onSent, onClose }: Props) {
@@ -50,6 +51,7 @@ export function HandoffDialog({ drag, from, to, onSent, onClose }: Props) {
         fromSessionId: drag.sessionId,
         toSessionId: toId,
         ...(drag.kind === "snippet" ? { eventId: drag.eventId } : {}),
+        ...(drag.kind === "note" ? { noteId: drag.noteId } : {}),
         ...(senderRef.current.trim() ? { sender: senderRef.current.trim() } : {}),
       },
       abort.signal,
@@ -80,6 +82,7 @@ export function HandoffDialog({ drag, from, to, onSent, onClose }: Props) {
       fromSessionId: drag.sessionId,
       toSessionId: toId,
       ...(drag.kind === "snippet" ? { eventId: drag.eventId } : {}),
+      ...(drag.kind === "note" ? { noteId: drag.noteId } : {}),
       markdown,
       sender: sender.trim(),
     }).then(onSent, (err: unknown) => {
@@ -106,7 +109,8 @@ export function HandoffDialog({ drag, from, to, onSent, onClose }: Props) {
           </button>
         </header>
         <p className="handoff-route">
-          {partyLabel(from)} <span aria-hidden>→</span> {partyLabel(to)}
+          {drag.kind === "note" ? "Sticky note" : partyLabel(from)} <span aria-hidden>→</span>{" "}
+          {partyLabel(to)}
         </p>
         {draft?.warning && <p className="handoff-warning">{draft.warning}</p>}
         {draft && (
@@ -117,9 +121,11 @@ export function HandoffDialog({ drag, from, to, onSent, onClose }: Props) {
                 ? draft.warning
                   ? "Edit freely before sending."
                   : "Drafted from the transcript (no summarizer configured). Edit freely."
-                : drag.kind === "chat"
-                  ? "The whole conversation, built from the transcript (no model). Edit freely."
-                  : "The event, as it appears in the feed."}
+                : drag.kind === "note"
+                  ? "A copy of the note, and of any files on it. The note stays on the canvas."
+                  : drag.kind === "chat"
+                    ? "The whole conversation, built from the transcript (no model). Edit freely."
+                    : "The event, as it appears in the feed."}
           </p>
         )}
         {draft || error ? (

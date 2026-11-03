@@ -45,6 +45,8 @@ export async function localHandoffs(options: {
   origin: () => string;
   summarize?: Summarizer | undefined;
   deps?: HandoffDeps;
+  /** Reads a note file accepted here (this machine is the hub). */
+  fetchBlob?: (sha256: string) => Promise<Uint8Array | undefined>;
 }): Promise<{ service: HandoffService; inbox: Inbox; store: HandoffStore }> {
   const store = new HandoffStore({
     file: join(options.dataDir, "handoffs.json"),
@@ -54,6 +56,7 @@ export async function localHandoffs(options: {
   let service: HandoffService | undefined;
   const inbox = new Inbox({
     ...inboxOptions(options.dataDir, options.logger, options.deps ?? {}),
+    ...(options.fetchBlob ? { fetchBlob: options.fetchBlob } : {}),
     origin: options.origin,
     report: (message) => service?.fromDaemon(undefined, message),
   });

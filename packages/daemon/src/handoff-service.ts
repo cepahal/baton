@@ -15,6 +15,7 @@ import {
 import type { Logger } from "pino";
 import type { HandoffRecord, HandoffStore } from "./handoff-store.js";
 import type { Hub } from "./hub.js";
+import type { NoteStore } from "./note-store.js";
 import type { Summarizer } from "./summarizer.js";
 
 /**
@@ -32,6 +33,8 @@ export type HandoffServiceOptions = {
   route: HandoffRoute;
   logger: Logger;
   summarize?: Summarizer | undefined;
+  /** The canvas's sticky notes, for `note` handoffs. Default: the hub's. */
+  notes?: NoteStore;
   /** Default SUMMARIZE_TIMEOUT_MS. */
   summarizeTimeoutMs?: number;
   now?: () => Date;
@@ -86,7 +89,9 @@ export class HandoffService {
 
   /** The editable preview for a drag. */
   async draft(req: HandoffDraftRequest): Promise<ServiceResult<HandoffDraft>> {
-    const parties = this.#parties(req.fromSessionId, req.toSessionId);
+    const note = this.#note(req);
+    if (note && !note.ok) return note;
+    const parties = this.#parties(req.fromSessionId, req.toSessionId, req.kind === "note");
     if (!parties.ok) return parties;
     const { from, to } = parties.value;
     const hub = this.options.hub;
@@ -102,6 +107,7 @@ export class HandoffService {
       kind: req.kind,
       eventId: req.eventId,
       filesTouched,
+      note: note?.value,
     });
     if (!built.ok) return { ok: false, status: 404, error: built.error };
     if (built.kind !== "full" || !built.summary) {
@@ -154,7 +160,10 @@ export class HandoffService {
 
   /** Stores a handoff and sends it on its way. */
   async create(body: HandoffCreate): Promise<ServiceResult<Handoff>> {
-    const parties = this.#parties(body.fromSessionId, body.toSessionId);
+    const note = this.#note(body);
+    if (note && !note.ok) return note;
+    const files = note?.value.files ?? [];
+    const parties = this.#parties(body.fromSessionId, body.toSessionId, body.kind === "note");
     if (!parties.ok) return parties;
     const { from, to } = parties.value;
     const hub = this.options.hub;
@@ -167,6 +176,7 @@ export class HandoffService {
       from,
       to,
       markdown: body.markdown,
+      ...(files.length > 0 ? { attachments: files.map((f) => ({ ...f })) } : {}),
       createdAt: at,
       updatedAt: at,
     };
@@ -228,8 +238,36 @@ export class HandoffService {
     this.options.hub.broadcast({ type: "handoff", handoff });
   }
 
-  #parties(fromId: string, toId: string): ServiceResult<{ from: HandoffParty; to: HandoffParty }> {
-    if (fromId === toId) return { ok: false, status: 400, error: "pick a different session" };
+  /** Files that pending handoffs still need: kept when their notes go. */
+  attachmentsInUse(): Set<string> {
+    const out = new Set<string>();
+    for (const { handoff } of this.options.store.list()) {
+      if (handoff.status !== "pending") continue;
+      for (const f of handoff.attachments ?? []) out.add(f.sha256);
+    }
+    return out;
+  }
+
+  /** A `note` handoff's note (undefined for other kinds). */
+  #note(req: { kind: HandoffDraftRequest["kind"]; noteId?: string | undefined }) {
+    if (req.kind !== "note") return undefined;
+    const note = req.noteId === undefined ? undefined : this.#notes().get(req.noteId);
+    if (!note) return { ok: false as const, status: 404, error: "that sticky note is gone" };
+    return { ok: true as const, value: note };
+  }
+
+  #notes(): NoteStore {
+    return this.options.notes ?? this.options.hub.notes;
+  }
+
+  /** A note comes from the canvas, not a session: its "from" is the receiver. */
+  #parties(
+    fromId: string,
+    toId: string,
+    sameIsFine = false,
+  ): ServiceResult<{ from: HandoffParty; to: HandoffParty }> {
+    if (fromId === toId && !sameIsFine)
+      return { ok: false, status: 400, error: "pick a different session" };
     const from = this.#party(fromId);
     const to = this.#party(toId);
     if (!from || !to) return { ok: false, status: 404, error: "unknown session" };

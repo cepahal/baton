@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { defaultClientConditions, defineConfig } from "vite";
+import { defaultClientConditions, defaultServerConditions, defineConfig } from "vite";
 import { z } from "zod";
 
 // `pnpm dev` proxies to the daemon on BATON_PORT (same default as `baton start`).
@@ -11,6 +11,8 @@ export default defineConfig({
     // Resolve workspace packages to their TypeScript source (the "source" export condition).
     conditions: ["source", ...defaultClientConditions],
   },
+  // Tests render on the server side: resolve core's source there too, not a stale build.
+  ssr: { resolve: { conditions: ["source", ...defaultServerConditions] } },
   server: {
     // `pnpm dev`: the daemon serves the API and socket; Vite serves the app.
     proxy: {
@@ -18,6 +20,8 @@ export default defineConfig({
       "/canvas": `http://127.0.0.1:${port}`,
       "/handoffs": `http://127.0.0.1:${port}`,
       "/inbox": `http://127.0.0.1:${port}`,
+      "/notes": `http://127.0.0.1:${port}`,
+      "/blobs": `http://127.0.0.1:${port}`,
       "/ws": { target: `ws://127.0.0.1:${port}`, ws: true },
     },
   },
