@@ -35,6 +35,7 @@ export function useConnection(
         onCanvas: (message) => canvasRef.current?.(message),
         onHandoff: (message) => handoffRef.current?.(message),
         onNotes: (message) => notesRef.current?.(message),
+        onSessionRemoved: (message) => store.remove(message.sessionId),
       }),
   );
   useEffect(() => {

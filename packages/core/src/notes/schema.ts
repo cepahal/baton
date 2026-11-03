@@ -80,7 +80,12 @@ export const NotesResponse = z.object({ notes: z.array(Note) });
 export type NotesResponse = z.infer<typeof NotesResponse>;
 
 /** `POST /blobs` response. */
-export const BlobResponse = z.object({ sha256: BlobId, size: z.number().int().min(0) });
+export const BlobResponse = z.object({
+  sha256: BlobId,
+  size: z.number().int().min(0),
+  /** The image type the hub found in the file's bytes; absent when it isn't one. */
+  image: z.enum(["image/png", "image/jpeg", "image/gif", "image/webp"]).optional(),
+});
 export type BlobResponse = z.infer<typeof BlobResponse>;
 
 /** Types a viewer may show inline. Everything else is served as a download. */

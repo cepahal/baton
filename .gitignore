@@ -4,3 +4,4 @@ dist/
 coverage/
 .vite/
 .DS_Store
+.e2e-results

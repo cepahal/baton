@@ -8,6 +8,7 @@ import { type DaemonConfig, HOST } from "./config.js";
 import { MemoryEventLog } from "./event-log.js";
 import { type HandoffDeps, localHandoffs } from "./handoff-kit.js";
 import { Hub } from "./hub.js";
+import { logFilePath } from "./logging.js";
 import { modelsFor } from "./models.js";
 import { NoteStore } from "./note-store.js";
 import { RepoResolver } from "./repo-info.js";
@@ -90,6 +91,11 @@ export async function startDaemon(
     handoffs: handoffs.service,
     inbox: handoffs.inbox,
     notes: { blobs, blobsInUse: () => handoffs.service.attachmentsInUse() },
+    report: {
+      logFile: logFilePath(dirname(config.stateFile), "daemon"),
+      secrets: [],
+      facts: { mode: "local daemon" },
+    },
   });
   await server.listen({ host: HOST, port: config.port });
   const address = server.server.address();

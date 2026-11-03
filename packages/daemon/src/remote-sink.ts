@@ -1,7 +1,9 @@
 import {
+  BATON_VERSION,
   type BatonEvent,
   type HandoffOfferMessage,
   type HandoffStatusMessage,
+  INGEST_PROTOCOL_VERSION,
   IngestServerMessage,
   type PublishMessage,
   type RepoInfo,
@@ -9,6 +11,7 @@ import {
 import type { Logger } from "pino";
 import WebSocket from "ws";
 import type { DiskQueue } from "./disk-queue.js";
+import { newMachineId } from "./machine-id.js";
 import type { EventSink, PublishOptions } from "./sink.js";
 
 export type RemoteSinkOptions = {
@@ -33,6 +36,13 @@ export type RemoteSinkOptions = {
   ackTimeoutMs?: number;
   /** Handoff messages from the server, for this machine's inbox. */
   onHandoff?: (message: HandoffOfferMessage) => void;
+  /** This machine's id (see `loadMachineId`). Default: a new one per sink. */
+  machine?: string;
+  /**
+   * The server refused this daemon for good (wrong version, name taken).
+   * The sink has stopped reconnecting; the message says what to do.
+   */
+  onRefused?: (message: string) => void;
 };
 
 /** Answers about handoffs, sent up the same connection. */
@@ -40,13 +50,18 @@ export type HandoffControl = HandoffStatusMessage;
 
 type InFlight = { batch: number; count: number; timer: NodeJS.Timeout };
 
-/** The `/ingest` WebSocket URL for a server base URL and daemon name. */
-export function ingestUrl(server: string, name: string): string {
+/** The `/ingest` WebSocket URL for a server base URL, daemon name and machine id. */
+export function ingestUrl(server: string, name: string, machine: string = newMachineId()): string {
   const url = new URL(server);
   if (url.protocol === "http:") url.protocol = "ws:";
   else if (url.protocol === "https:") url.protocol = "wss:";
   url.pathname = `${url.pathname.replace(/\/+$/, "")}/ingest`;
-  url.search = new URLSearchParams({ name }).toString();
+  url.search = new URLSearchParams({
+    name,
+    protocol: String(INGEST_PROTOCOL_VERSION),
+    app: BATON_VERSION,
+    machine,
+  }).toString();
   return url.toString();
 }
 
@@ -74,18 +89,33 @@ export class RemoteSink implements EventSink {
   #alive = false;
   #closed = false;
   #connectedOnce = false;
+  /** The server's `ingest_hello` on this connection, if it sent one. */
+  #server: { app: string; protocol: number } | undefined;
+  #warnedNoHello = false;
+  /** Refused for good: stop reconnecting. */
+  #refused: string | undefined;
   #drainWaiters: (() => void)[] = [];
   /** Handoff answers waiting for a connection; the server resends offers on connect anyway. */
   #control: HandoffControl[] = [];
 
   constructor(readonly options: RemoteSinkOptions) {
-    this.#url = ingestUrl(options.server, options.name);
+    this.#url = ingestUrl(options.server, options.name, options.machine);
     this.#log = options.logger.child({ server: new URL(this.#url).host, name: options.name });
     this.#retryMs = this.#minRetry;
   }
 
   get #minRetry(): number {
     return this.options.minRetryMs ?? 250;
+  }
+
+  /** What the server said it runs, once connected. */
+  get serverVersion(): { app: string; protocol: number } | undefined {
+    return this.#server;
+  }
+
+  /** Why the server refused this daemon for good, if it did. */
+  get refused(): string | undefined {
+    return this.#refused;
   }
 
   /** Whether the connection to the server is currently open. */
@@ -151,7 +181,7 @@ export class RemoteSink implements EventSink {
   }
 
   #connect(): void {
-    if (this.#closed) return;
+    if (this.#closed || this.#refused !== undefined) return;
     const socket = new WebSocket(this.#url, {
       headers: { authorization: `Bearer ${this.options.token}` },
       handshakeTimeout: 10_000,
@@ -161,6 +191,7 @@ export class RemoteSink implements EventSink {
     socket.on("open", () => {
       if (socket !== this.#socket) return;
       this.#open = true;
+      this.#server = undefined;
       this.#log.info(
         { pending: this.options.queue.size },
         this.#connectedOnce ? "reconnected to team server" : "connected to team server",
@@ -200,7 +231,7 @@ export class RemoteSink implements EventSink {
     this.#stopPing();
     if (this.#inFlight) clearTimeout(this.#inFlight.timer);
     this.#inFlight = undefined;
-    if (this.#closed) return;
+    if (this.#closed || this.#refused !== undefined) return;
     if (wasOpen)
       this.#log.warn({ pending: this.options.queue.size }, "lost team server connection");
     const delay = Math.round(this.#retryMs * (0.75 + Math.random() * 0.5));
@@ -221,8 +252,27 @@ export class RemoteSink implements EventSink {
       return;
     }
     if (msg.data.type === "error") {
+      if (msg.data.code === "version" || msg.data.code === "name_taken") {
+        this.#refuse(msg.data.message);
+        return;
+      }
       this.#log.error({ message: msg.data.message }, "team server reported an error");
       return;
+    }
+    if (msg.data.type === "ingest_hello") {
+      this.#server = { app: msg.data.app, protocol: msg.data.protocol };
+      if (msg.data.protocol !== INGEST_PROTOCOL_VERSION) {
+        this.#refuse(
+          `The team server speaks protocol ${msg.data.protocol} (Baton ${msg.data.app}); this daemon speaks ${INGEST_PROTOCOL_VERSION} (Baton ${BATON_VERSION}). Update whichever is older.`,
+        );
+      }
+      return;
+    }
+    if (this.#server === undefined && !this.#warnedNoHello) {
+      this.#warnedNoHello = true;
+      this.#log.warn(
+        "the team server didn't say which version it runs; it's probably older than this daemon. Ask whoever runs it to update.",
+      );
     }
     if (msg.data.type === "handoff_offer") {
       this.options.onHandoff?.(msg.data);
@@ -276,6 +326,16 @@ export class RemoteSink implements EventSink {
     }, this.options.ackTimeoutMs ?? 30_000);
     this.#inFlight = { batch, count: items.length, timer };
     socket.send(JSON.stringify(msg));
+  }
+
+  /** Stops for good: logs why, tells the owner, and closes the socket without retrying. */
+  #refuse(message: string): void {
+    if (this.#refused !== undefined) return;
+    this.#refused = message;
+    this.#log.error(message);
+    clearTimeout(this.#retryTimer);
+    this.#socket?.close(1000, "refused");
+    this.options.onRefused?.(message);
   }
 
   #startPing(socket: WebSocket): void {

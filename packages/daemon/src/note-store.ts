@@ -1,8 +1,20 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { NOTES_MAX, type Note, type NoteCreate, type NotePatch, NotesFile } from "@baton/core";
+import { NOTES_MAX, Note, type NoteCreate, type NotePatch } from "@baton/core";
 import type { Logger } from "pino";
+import {
+  loadVersioned,
+  parseRecords,
+  saveVersioned,
+  type VersionedSpec,
+} from "./versioned-file.js";
+
+/** The notes file. Version 0 was a bare array of notes. */
+export const NOTES_FILE: VersionedSpec<Note[]> = {
+  what: "notes",
+  version: 1,
+  migrations: [(data) => data],
+  parse: parseRecords(Note, NOTES_MAX),
+};
 
 /** Ids: "n" + 10 base-36 characters. */
 export function newNoteId(): string {
@@ -33,19 +45,15 @@ export class NoteStore {
 
   constructor(readonly options: NoteStoreOptions = {}) {}
 
-  /** Reads the saved file, if any. A missing or corrupt file starts empty. */
+  /**
+   * Reads the saved file, if any, upgrading older versions. Never loses data
+   * (see `loadVersioned`); throws if the file is newer than this build.
+   */
   async load(): Promise<void> {
     const file = this.options.file;
     if (file === undefined) return;
-    try {
-      const parsed = NotesFile.safeParse(JSON.parse(await readFile(file, "utf8")));
-      if (parsed.success) for (const n of parsed.data) this.#notes.set(n.id, n);
-      else this.options.logger?.warn({ file }, "ignoring an invalid notes file");
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        this.options.logger?.warn({ err, file }, "could not read the notes file");
-      }
-    }
+    const notes = await loadVersioned(file, NOTES_FILE, this.options.logger);
+    for (const n of notes ?? []) this.#notes.set(n.id, n);
   }
 
   all(): Note[] {
@@ -139,13 +147,10 @@ export class NoteStore {
   #save(): void {
     const file = this.options.file;
     if (file === undefined) return;
-    const data = JSON.stringify(this.all());
+    const data = this.all();
     this.#saving = this.#saving.then(async () => {
       try {
-        await mkdir(dirname(file), { recursive: true });
-        const tmp = `${file}.tmp`;
-        await writeFile(tmp, data);
-        await rename(tmp, file);
+        await saveVersioned(file, NOTES_FILE.version, data);
       } catch (err) {
         this.options.logger?.warn({ err, file }, "could not save the notes file");
       }

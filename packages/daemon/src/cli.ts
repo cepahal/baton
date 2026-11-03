@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { type Logger, pino } from "pino";
 import { z } from "zod";
@@ -9,6 +9,8 @@ import {
   DEFAULT_QUEUE_MB,
   DEFAULT_RECENT,
   DEFAULT_SUMMARIZER_MODEL,
+  defaultCodexDir,
+  defaultProjectsDir,
   defaultStateFile,
   MIN_TOKEN_LENGTH,
   resolveConfig,
@@ -16,7 +18,9 @@ import {
   type ServeConfig,
 } from "./config.js";
 import { startDaemon } from "./daemon.js";
-import { startForwarder } from "./forwarder.js";
+import { sharingFilePath, startForwarder } from "./forwarder.js";
+import { type LocalAction, runLocal } from "./local-commands.js";
+import { createLogger, logFilePath } from "./logging.js";
 import { DEFAULT_OLLAMA_URL } from "./ollama.js";
 import { type ReplayOptions, runReplay } from "./replay.js";
 import { startTeamServer } from "./team-server.js";
@@ -25,6 +29,17 @@ export const USAGE = `Usage:
   baton start [options]           Stream this machine's sessions (locally, or to a team server)
   baton serve [options]           Run a team server: hub + viewer for several daemons
   baton replay <fixture> [options]  Write a Claude Code or Codex log into a watched dir at its recorded pace
+
+  baton share [dir]               Share sessions in this repo (or folder) with the team server
+  baton unshare [dir]             Stop sharing it
+  baton sharing                   List what's shared
+  baton pause | resume            Stop / restart sending anything at all
+  baton doctor [--server <url>]   Check this machine's setup (and the team server, with BATON_TOKEN)
+  baton report                    Print version info and recent redacted logs for a bug report
+  baton --version
+
+Nothing is sent to a team server until you \`baton share\` a repo. See
+docs/what-baton-shares.md.
 
 baton start: watches Claude Code and Codex sessions and serves them on
 http://127.0.0.1:<port>, or with --server sends them to a team server.
@@ -85,6 +100,7 @@ export type CliResult =
   | { command: "start"; config: DaemonConfig }
   | { command: "serve"; config: ServeConfig }
   | { command: "replay"; options: ReplayCommand }
+  | { command: "local"; action: LocalAction }
   | { command: "error"; message: string };
 
 /** Environment variables the CLI reads, validated like the flags. */
@@ -93,6 +109,8 @@ const Env = z.object({
   BATON_SUMMARIZER: z.string().min(1).optional(),
   BATON_SUMMARIZER_MODEL: z.string().min(1).optional(),
   BATON_OLLAMA_URL: z.string().min(1).optional(),
+  /** Where `pnpm baton …` was typed: pnpm runs scripts from the repo root, and says where it came from here. */
+  INIT_CWD: z.string().min(1).optional(),
 });
 
 const ReplayArgs = z.object({
@@ -125,6 +143,7 @@ export function parseCli(
   }
   const { values, positionals } = parsed;
   if (values.help) return { command: "help" };
+  if (values.version) return { command: "local", action: { kind: "version" } };
   const [command, ...rest] = positionals;
   const vars = Env.safeParse(env).data;
   const token = vars?.BATON_TOKEN;
@@ -208,6 +227,15 @@ export function parseCli(
         });
         return { command: "serve", config };
       }
+      case "share":
+      case "unshare":
+      case "sharing":
+      case "pause":
+      case "resume":
+      case "doctor":
+      case "report":
+      case "version":
+        return localCommand(command, rest, values, token, vars?.INIT_CWD);
       case "replay": {
         const [fixture, ...extra] = rest;
         if (fixture === undefined) return { command: "error", message: "replay needs a fixture" };
@@ -292,8 +320,64 @@ function parse(argv: readonly string[]) {
       "max-gap": { type: "string" },
       seed: { type: "string" },
       help: { type: "boolean", short: "h" },
+      version: { type: "boolean", short: "v" },
     },
   });
+}
+
+/** `share`, `doctor` and the other commands that act on this machine and exit. */
+function localCommand(
+  command: "share" | "unshare" | "sharing" | "pause" | "resume" | "doctor" | "report" | "version",
+  rest: readonly string[],
+  values: Record<string, unknown>,
+  token: string | undefined,
+  initCwd: string | undefined,
+): CliResult {
+  const takesDir = command === "share" || command === "unshare";
+  if (rest.length > (takesDir ? 1 : 0)) return unexpected(rest[takesDir ? 1 : 0]);
+  const allowed = new Set(["state-file", "help", "version", "log-level"]);
+  if (command === "doctor") for (const f of ["server", "projects-dir", "codex-dir"]) allowed.add(f);
+  const misplaced = Object.keys(values).find((k) => values[k] !== undefined && !allowed.has(k));
+  if (misplaced) return { command: "error", message: `--${misplaced} isn't a ${command} option` };
+  const str = (k: string) => (typeof values[k] === "string" ? values[k] : undefined);
+  const stateFile = str("state-file") ?? defaultStateFile();
+  const sharingFile = sharingFilePath(stateFile);
+  switch (command) {
+    case "share":
+    case "unshare":
+      // Relative to where the user typed it, even through `pnpm baton`.
+      return {
+        command: "local",
+        action: { kind: command, dir: resolve(initCwd ?? ".", rest[0] ?? "."), sharingFile },
+      };
+    case "sharing":
+    case "pause":
+    case "resume":
+      return { command: "local", action: { kind: command, sharingFile } };
+    case "version":
+      return { command: "local", action: { kind: "version" } };
+    case "report":
+      return {
+        command: "local",
+        action: { kind: "report", logFile: logFilePath(dirname(stateFile), "daemon"), token },
+      };
+    case "doctor":
+      return {
+        command: "local",
+        action: {
+          kind: "doctor",
+          input: {
+            nodeVersion: process.version,
+            projectsDir: str("projects-dir") ?? defaultProjectsDir(),
+            codexDir: str("codex-dir") ?? defaultCodexDir(),
+            sharingFile,
+            logFile: logFilePath(dirname(stateFile), "daemon"),
+            server: str("server"),
+            token,
+          },
+        },
+      };
+  }
 }
 
 const unexpected = (arg: string | undefined): CliResult => ({
@@ -322,6 +406,17 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
+  if (result.command === "local") {
+    try {
+      process.exitCode = await runLocal(result.action);
+    } catch (err) {
+      process.stderr.write(`baton: ${err instanceof Error ? err.message : String(err)}
+`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   if (result.command === "replay") {
     const { logLevel, ...options } = result.options;
     const logger = pino({ level: logLevel });
@@ -337,10 +432,23 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const logger = pino({ level: result.config.logLevel });
-  let close: () => Promise<void>;
+  const stateDir = dirname(
+    result.command === "serve" ? defaultStateFile() : result.config.stateFile,
+  );
+  const logger = createLogger(
+    result.config.logLevel,
+    logFilePath(stateDir, result.command === "serve" ? "server" : "daemon"),
+  );
+  let close: () => Promise<void> = async () => {};
+  const refused = (message: string) => {
+    // The server won't take this daemon until something changes here: say so and stop.
+    process.stderr.write(`
+baton: ${message}
+`);
+    close().finally(() => process.exit(1));
+  };
   try {
-    close = await startCommand(result, logger);
+    close = await startCommand(result, logger, refused);
   } catch (err) {
     logger.fatal({ err }, "baton could not start");
     process.exitCode = 1;
@@ -364,6 +472,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 async function startCommand(
   result: Extract<CliResult, { command: "start" | "serve" }>,
   logger: Logger,
+  onRefused: (message: string) => void,
 ): Promise<() => Promise<void>> {
   if (result.command === "serve") {
     const server = await startTeamServer(result.config, logger, {
@@ -371,6 +480,8 @@ async function startCommand(
       handoffsFile: join(dirname(defaultStateFile()), "team-handoffs.json"),
       notesFile: join(dirname(defaultStateFile()), "team-notes.json"),
       blobsDir: join(dirname(defaultStateFile()), "team-blobs"),
+      removedFile: join(dirname(defaultStateFile()), "team-removed.json"),
+      backupDir: join(dirname(defaultStateFile()), "backups"),
     });
     logger.info(
       { host: result.config.host, port: server.port },
@@ -380,7 +491,7 @@ async function startCommand(
   }
   const { config } = result;
   if (config.remote) {
-    const forwarder = await startForwarder(config, config.remote, logger);
+    const forwarder = await startForwarder(config, config.remote, logger, { onRefused });
     logger.info(
       { server: config.remote.server, name: config.remote.name },
       "baton is streaming to the team server",

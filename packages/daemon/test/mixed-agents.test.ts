@@ -50,10 +50,11 @@ describe("Claude Code and Codex sessions at once", () => {
           fixture: join(FIXTURES, r.fixture),
           projectsDir: dirs.projectsDir,
           codexDir: dirs.codexDir,
-          speed: 1000,
-          // Gaps long enough that both agents are still writing when the watcher
-          // picks the Codex rollouts up, even with the whole suite running.
-          maxGapMs: 20,
+          // Slow enough that each replay lasts a few seconds (a fast one is over
+          // before a busy watcher notices the other agent's file), with pauses
+          // capped so the test stays short.
+          speed: 100,
+          maxGapMs: 40,
           as: r.as,
           seed: r.as,
           logger: silent,

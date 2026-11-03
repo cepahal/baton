@@ -28,6 +28,11 @@ export interface EventLog {
   append(event: BatonEvent, backlog: boolean): LogEntry | undefined;
   /** Up to `limit` entries with seq > `after`, oldest first. */
   read(after: number, limit: number): LogEntry[];
+  /**
+   * Drops every held event of one session. Other events keep their seqs;
+   * the removed ones read as absent. Returns how many went.
+   */
+  forgetSession(sessionId: string): number;
 }
 
 export type MemoryEventLogOptions = {
@@ -42,7 +47,10 @@ export type MemoryEventLogOptions = {
 /** Rough per-entry cost beyond the event's JSON (object headers, the id index). */
 const ENTRY_OVERHEAD_BYTES = 200;
 
-type Stored = LogEntry & { bytes: number };
+/** A held event, or the hole a forgotten one leaves (its seq stays taken). */
+type Stored = (LogEntry & { bytes: number }) | { seq: number; hole: true; bytes: 0 };
+
+const isHole = (s: Stored): s is Extract<Stored, { hole: true }> => "hole" in s;
 
 /**
  * Keeps events in memory, dropping the oldest once the byte budget (or event
@@ -94,14 +102,26 @@ export class MemoryEventLog implements EventLog {
   }
 
   read(after: number, limit: number): LogEntry[] {
-    const start = this.#indexAfter(after);
-    const end = Math.min(this.#entries.length, start + limit);
     const out: LogEntry[] = [];
-    for (let i = start; i < end; i++) {
+    // Holes are skipped, so keep going until `limit` real entries or the end.
+    for (let i = this.#indexAfter(after); i < this.#entries.length && out.length < limit; i++) {
       const s = this.#entries[i];
-      if (s) out.push({ seq: s.seq, backlog: s.backlog, event: s.event });
+      if (s && !isHole(s)) out.push({ seq: s.seq, backlog: s.backlog, event: s.event });
     }
     return out;
+  }
+
+  forgetSession(sessionId: string): number {
+    let removed = 0;
+    for (let i = this.#head; i < this.#entries.length; i++) {
+      const s = this.#entries[i];
+      if (!s || isHole(s) || s.event.sessionId !== sessionId) continue;
+      this.#entries[i] = { seq: s.seq, hole: true, bytes: 0 };
+      this.#bytes -= s.bytes;
+      this.#ids.delete(dedupeKey(s.event));
+      removed++;
+    }
+    return removed;
   }
 
   /** Index of the first live entry with seq > `after` (seqs are contiguous). */
@@ -126,7 +146,7 @@ export class MemoryEventLog implements EventLog {
       this.#entries[this.#head] = undefined;
       this.#head++;
       this.#bytes -= oldest.bytes;
-      this.#ids.delete(dedupeKey(oldest.event));
+      if (!isHole(oldest)) this.#ids.delete(dedupeKey(oldest.event));
     }
     // Compact once the dead prefix is large, so shifting stays amortized O(1).
     if (this.#head > 1024 && this.#head * 2 > this.#entries.length) {

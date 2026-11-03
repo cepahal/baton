@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { normalizeRemoteUrl, type RepoInfo, repoRelativePath } from "@baton/core";
+import { osDir } from "./paths.js";
 
 /** Runs `git <args>` in `cwd`; resolves stdout, or undefined if git fails. */
 export type GitRunner = (cwd: string, args: readonly string[]) => Promise<string | undefined>;
@@ -66,7 +67,8 @@ export class RepoResolver {
     if (hit && this.fresh(dir)) return hit.info;
     const entry: { at: number; info: Promise<RepoInfo>; settled?: RepoInfo } = {
       at: this.#now(),
-      info: lookupRepo(dir, this.#git).catch(() => NOT_A_REPO),
+      // Git Bash paths (/c/...) in Windows logs: git needs C:... to run there.
+      info: lookupRepo(osDir(dir), this.#git).catch(() => NOT_A_REPO),
     };
     // Until the new lookup settles, `cached` keeps answering with the old one.
     if (hit?.settled) entry.settled = hit.settled;

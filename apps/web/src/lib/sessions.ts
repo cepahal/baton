@@ -12,6 +12,13 @@ export async function fetchSessions(signal?: AbortSignal): Promise<SessionInfo[]
   return SessionsResponse.parse(await res.json()).sessions;
 }
 
+/** `DELETE /sessions/:id`: removes a session for everyone on the hub. */
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await fetch(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404)
+    throw new Error(`Couldn't delete the session: HTTP ${res.status}`);
+}
+
 /** The hub's WebSocket URL on the page's own host (the daemon, or the Vite dev proxy). */
 export function defaultSocketUrl(location: Pick<Location, "protocol" | "host">): string {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;

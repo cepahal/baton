@@ -8,7 +8,8 @@ events there, and everyone watches every session in one browser tab.
 # On the server
 BATON_TOKEN=<shared secret, 16+ chars> pnpm baton serve [--port 7777]
 
-# On each teammate's machine
+# On each teammate's machine: share a repo first (nothing is sent until you do)
+pnpm baton share /path/to/repo
 BATON_TOKEN=<same secret> pnpm baton start --server ws://team-host:7777 [--name grant]
 
 # In a browser
@@ -52,6 +53,35 @@ rules and an `/ingest` route.
 - After a restart the watcher publishes active sessions' history again, as in
   local mode. The server already holds those ids and skips them.
 
+### Sharing
+
+The forwarder wraps its sink in a `SharingSink` (`src/sharing.ts`):
+`watcher → SharingSink → RepoTaggingSink → RemoteSink`. Events of sessions not
+in a shared repo or folder (`sharing.json` next to the state file, written by
+`baton share`/`unshare`/`pause`/`resume`, re-read about once a second) are
+dropped before they reach the queue, and what's kept has credentials masked
+(`maskEventSecrets` in core). A session seen once in a shared place stays
+shared until the settings change. On the first start with sharing controls, a
+queue left by an older Baton is dropped: none of it was chosen.
+[what-baton-shares.md](what-baton-shares.md) is the user-facing version.
+
+### Versions and names
+
+`/ingest` takes `?name=&protocol=&app=&machine=`. `protocol` is
+`INGEST_PROTOCOL_VERSION` (core `version.ts`). A daemon on another protocol, or
+one from before versioning (no `protocol`), gets
+`{ type: "error", code: "version", message }` saying which side to update, and
+close 1008. Otherwise the server's first message is
+`{ type: "ingest_hello", protocol, app }`. `machine` is a random id kept in
+the daemon's state dir: a second machine using a name that's connected gets
+`code: "name_taken"`; the same machine reconnecting replaces its old socket.
+On either code `RemoteSink` stops reconnecting and `baton start` exits with
+the message.
+
+Bump `INGEST_PROTOCOL_VERSION` whenever daemons and servers of different builds
+can't talk; that's what turns a mismatch into a clear error instead of a quiet
+reconnect loop.
+
 ## The server side
 
 - `baton serve` binds `0.0.0.0` (`--host` to change) and requires
@@ -70,6 +100,44 @@ rules and an `/ingest` route.
   `team-notes.json` and `team-blobs/`, so every machine sees the same notes.
   Daemons fetch a handed-off note's files with their token. See
   [notes.md](notes.md).
+- `DELETE /sessions/:id` (any token holder) removes a session for everyone:
+  its events leave the log (other events keep their seqs), viewers get
+  `{ type: "session_removed", sessionId }`, and the id goes in
+  `team-removed.json` so later resends are dropped, across restarts too.
+- `GET /whoami` (token required) answers `{ ok, app, protocol, now }`, for
+  `baton doctor`'s token, version and clock checks.
+- The viewer is served with a CSP (`VIEWER_CSP` in `server.ts`): its own
+  script only, images from itself, connections to itself.
+
+### Files and upgrades
+
+Every saved file (`team-notes.json`, `team-handoffs.json`, `team-canvas.json`,
+`team-removed.json`, `sharing.json`) is `{ "version": n, "data": … }`, read by
+`loadVersioned` (`src/versioned-file.ts`). A file without the envelope is
+version 0, the format before versioning. Loading never loses data: an older
+version is copied to `<file>.v<n>.bak` and migrated; invalid records are
+skipped and the original copied to `<file>.dropped-<time>`; unreadable JSON is
+renamed to `<file>.corrupt-<time>` instead of being overwritten; a file from a
+newer build stops the server with an error. To change a file's shape, bump its
+`version` and add a migration. `test/upgrade.test.ts`, and the multi-machine
+test (which starts the server on `scripts/multi/legacy-state/`), cover upgrades.
+
+### Backups
+
+`baton serve` snapshots its files into `<state>/backups/<time>/` when it starts
+(if the newest snapshot is over a day old) and daily after that, keeping 7.
+Note files are copied once into `<state>/backups/blobs/` and listed per
+snapshot in `blobs.txt`; files no snapshot lists are pruned. Restoring is in
+[known-limitations.md](known-limitations.md#data).
+
+### Logs and reports
+
+Both commands log to stdout and to `<state>/logs/daemon.log` (or `server.log`),
+rotated at 5 MB on start, with tokens and auth headers redacted. `baton report`
+and the daemon's local `GET /report` page show version info and the last 200
+lines, further redacted (known secrets, key-like strings, the home folder).
+`/report` is never on a team server.
+
 
 ### Access
 
@@ -86,7 +154,11 @@ whose `Origin` doesn't match its `Host` gets 403, cookie or not, so other sites
 can't use a signed-in browser. Tokens are compared in constant time.
 
 Team mode sends events in plain `ws://`. Put it behind a TLS proxy (and use
-`wss://` for `--server`) anywhere but a trusted network.
+`wss://` for `--server`) anywhere but a trusted network such as a tailnet.
+
+`baton doctor --server <url>` checks a teammate's setup end to end: Node, git,
+agent folders, sharing, the server's `/health`, the token (`/whoami`), protocol
+compatibility and clock skew.
 
 ## `GET /events`
 
@@ -122,14 +194,25 @@ directory:
 `heidi`, see `scripts/multi/fleet.mjs`), each replaying a different fixture
 into its own projects or Codex sessions dir while `baton start --server` forwards it
 (`docker/machine.sh`). The daemon runs in a restart loop with its pid in
-`/data/daemon.pid`, standing in for a supervisor.
+`/data/daemon.pid`, standing in for a supervisor. Each machine runs
+`baton share` first: `alice` and `bob` work in checkouts of one git repo
+(`REPO=shop`), the rest share `/`. A ninth machine, `mallory`, shares only an
+empty folder. The server (`docker/server.sh`) starts on the unversioned files
+in `scripts/multi/legacy-state/`.
 
 - `pnpm test:multi`: brings the stack up, waits until every machine's session
   is complete, then checks via `/sessions` and `/events` that there are eight
   sessions, one per daemon name, each with the fixture's agent (six Claude
   Code, two Codex: `grace`, `heidi`); hub seqs run 1..n with no holes; no id
   repeats within a session; and each session's events have the parser's seqs `0..n-1` in order,
-  with the same kinds the parser produces for its fixture. Tears down after.
+  with the same kinds the parser produces for its fixture. Then
+  `scripts/multi/beta-checks.mjs`: nothing of `mallory`'s arrived though its
+  daemon saw its session; the legacy note, handoff and canvas position are all
+  there; a daemon sending no protocol is told to update; a second machine
+  calling itself `alice` is refused; `alice` and `bob` share a repo. Tears
+  down after.
+- `pnpm test:e2e`: a smaller stack (alice, bob, grace, and mallory) driven
+  through the viewer in Chromium with Playwright; see `e2e/`.
 - `pnpm test:chaos`: the same, with replays slowed so faults land mid-stream.
   It `kill -9`s bob's daemon (it restarts and resends) and disconnects alice's
   container from the network for 30 s (her events queue on disk; the test

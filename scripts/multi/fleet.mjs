@@ -10,6 +10,11 @@ export const FLEET = [
   { name: "heidi", fixture: "codex/forked-frontend.rollout.jsonl", agent: "codex" },
 ].map((m) => ({ agent: "claude-code", ...m }));
 
+/** A machine that shares nothing (SHARE is an empty folder): none of it may arrive. */
+export const PRIVATE_MACHINE = "mallory";
+/** The repo alice and bob both work in, so their cards are grouped and linked. */
+export const SHARED_REPO = "github.com/acme/shop";
+
 export const PROJECT = "baton-test";
 export const COMPOSE_FILE = "docker-compose.test.yml";
 export const TOKEN = process.env.BATON_TOKEN ?? "baton-multi-machine-test-token";

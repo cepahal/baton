@@ -18,6 +18,7 @@
     "baton": "node packages/daemon/dist/index.js",
     "test:multi": "pnpm --filter @baton/core build && node scripts/multi/test.mjs",
     "test:chaos": "pnpm --filter @baton/core build && node scripts/multi/chaos.mjs",
+    "test:e2e": "pnpm --filter @baton/core build && node scripts/multi/e2e.mjs",
     "demo": "pnpm build && node scripts/multi/local.mjs"
   },
   "devDependencies": {

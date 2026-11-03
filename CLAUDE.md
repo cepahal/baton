@@ -54,6 +54,15 @@ described in [docs/team.md](docs/team.md).
   server can replace the local hub without touching the watcher. The daemon's
   behaviour and the WebSocket protocol are in [docs/daemon.md](docs/daemon.md);
   wire schemas live in `packages/core/src/protocol.ts`.
+- **Nothing leaves a machine unless it's shared.** The forwarder's
+  `SharingSink` drops sessions outside `baton share`d repos and masks
+  credentials; don't add a path from the watcher to a remote sink that skips
+  it. User-facing rules are in [docs/what-baton-shares.md](docs/what-baton-shares.md).
+- **Saved files are versioned.** Use `loadVersioned`/`saveVersioned`
+  (`packages/daemon/src/versioned-file.ts`); changing a file's shape means
+  bumping its version and adding a migration, never starting empty.
+- Bump `INGEST_PROTOCOL_VERSION` (core `version.ts`) when daemons and servers
+  of different builds can no longer talk.
 - `baton start` binds `127.0.0.1` only and refuses non-local `Host`/`Origin`.
   Don't loosen that in v0. Only `baton serve` listens beyond localhost, and
   every route there but `/health` and `/login` requires the team token.
@@ -93,6 +102,7 @@ pnpm coverage    # test coverage of packages/core/src
 pnpm baton start # run the built daemon (pnpm build first); --help for options
 pnpm test:multi  # Docker: 1 team server + 8 replaying daemons (6 Claude Code, 2 Codex), checks exactly-once delivery
 pnpm test:chaos  # same, killing one daemon and cutting another off the network for 30s
+pnpm test:e2e    # Docker + Playwright: the viewer end to end (pnpm exec playwright install chromium, once)
 ```
 
 Daemon integration tests (`packages/daemon/test/integration.test.ts`) run a

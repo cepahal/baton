@@ -2,6 +2,7 @@ import { formatBytes, isInlineImage, NOTE_TEXT_MAX, type Note } from "@baton/cor
 import type { Node, NodeProps } from "@xyflow/react";
 import { useEffect, useRef, useState } from "react";
 import { blobUrl } from "../../lib/notes-api.js";
+import { Markdown } from "../events/Markdown.js";
 
 export type NoteNodeData = {
   note: Note;
@@ -104,7 +105,9 @@ export function NoteNode({ data }: NodeProps<NoteNodeType>) {
             <img className="note-thumb" src={blobUrl(image)} alt={image.name} draggable={false} />
           )}
           {note.text ? (
-            <p className="note-text">{note.text}</p>
+            <div className="note-text">
+              <Markdown text={note.text} />
+            </div>
           ) : (
             !image &&
             others.length === 0 && <p className="note-hint">Double-click to write, or drop files</p>

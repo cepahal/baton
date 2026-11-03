@@ -1836,10 +1836,31 @@ button.scard-grip {
   display: -webkit-box;
   margin: 0;
   overflow: hidden;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   -webkit-line-clamp: 7;
   -webkit-box-orient: vertical;
+}
+
+.note-text .md {
+  font-size: inherit;
+}
+
+.note-text .md img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+.md-img-blocked {
+  color: var(--ink-faint, #8a95aa);
+  font-style: italic;
+}
+
+.column-confirm {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .note-hint {
@@ -2121,4 +2142,14 @@ button.scard-grip {
 
 .note-preview .handoff-close {
   background: rgba(255, 255, 255, 0.7);
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+
+.report-link {
+  color: var(--ink-soft, #5d6a82);
 }

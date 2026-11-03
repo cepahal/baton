@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Handoff, Note, type NoteFile, NotesResponse } from "@baton/core";
+import { Handoff, NOTE_FILE_MAX_BYTES, Note, type NoteFile, NotesResponse } from "@baton/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import { BlobStore } from "../src/blob-store.js";
@@ -138,11 +138,12 @@ describe("sticky notes on a daemon", () => {
     const note = await createNote(d, { x: 0, y: 0, color: "orange" });
     const png = await upload(d, PNG, "shot.png", "image/png");
     expect(png.sha256).toBe(sha(PNG));
-    const html = await upload(
+    // Not an image whatever it claims: text with a .png name and type.
+    const fake = await upload(
       d,
-      new TextEncoder().encode("<script>alert(1)</script>"),
-      "x.html",
-      "text/html",
+      new TextEncoder().encode("GIF?? not really"),
+      "x.png",
+      "image/png",
     );
 
     // Files must be uploaded before a note can point at them.
@@ -151,25 +152,77 @@ describe("sticky notes on a daemon", () => {
       (await fetch(`${d.url}/notes/${note.id}`, send("PATCH", { files: [missing] }))).status,
     ).toBe(400);
     expect(
-      (await fetch(`${d.url}/notes/${note.id}`, send("PATCH", { files: [png, html] }))).status,
+      (await fetch(`${d.url}/notes/${note.id}`, send("PATCH", { files: [png, fake] }))).status,
     ).toBe(200);
 
-    const img = await fetch(`${d.url}/blobs/${png.sha256}?type=image/png&name=shot.png`);
+    // The type in the URL is ignored: a real PNG is inline even when called text.
+    const img = await fetch(`${d.url}/blobs/${png.sha256}?type=text/html&name=shot.png`);
     expect(img.headers.get("content-type")).toBe("image/png");
     expect(img.headers.get("content-disposition")).toMatch(/^inline/);
     expect(img.headers.get("x-content-type-options")).toBe("nosniff");
     expect(new Uint8Array(await img.arrayBuffer())).toEqual(PNG);
 
-    const page = await fetch(`${d.url}/blobs/${html.sha256}?type=text/html&name=x.html`);
+    // ...and a non-image is a sandboxed download even when called a PNG.
+    const page = await fetch(`${d.url}/blobs/${fake.sha256}?type=image/png&name=x.png`);
     expect(page.headers.get("content-type")).toBe("application/octet-stream");
     expect(page.headers.get("content-disposition")).toMatch(/^attachment/);
     expect(page.headers.get("content-security-policy")).toContain("sandbox");
+    expect(page.headers.get("x-content-type-options")).toBe("nosniff");
 
     expect((await fetch(`${d.url}/blobs/nothex`)).status).toBe(404);
 
     // Taking the note down drops files nothing else needs.
     await fetch(`${d.url}/notes/${note.id}`, { method: "DELETE" });
     await until(async () => (await fetch(`${d.url}/blobs/${png.sha256}`)).status === 404, "sweep");
+  });
+
+  it("refuses HTML and SVG uploads, and says which image type it found", async () => {
+    const d = await start();
+    const enc = (s: string) => new TextEncoder().encode(s);
+    for (const markup of [
+      "<script>alert(1)</script>",
+      "<!doctype html><html><body onload=alert(1)>",
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>',
+      '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+      "﻿  <HTML><iframe src=javascript:alert(1)>",
+    ]) {
+      const res = await fetch(`${d.url}/blobs`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: enc(markup),
+      });
+      expect(res.status, markup).toBe(415);
+    }
+    const res = await fetch(`${d.url}/blobs`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: PNG,
+    });
+    expect(await res.json()).toMatchObject({ image: "image/png" });
+    const text = await fetch(`${d.url}/blobs`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: enc("# just markdown"),
+    });
+    expect(await text.json()).not.toHaveProperty("image");
+  });
+
+  it("refuses uploads over the size cap", async () => {
+    const d = await start();
+    const big = new Uint8Array(NOTE_FILE_MAX_BYTES + 1);
+    // The hub answers 413 and closes as soon as the body is too big; under load
+    // the client can see that close (a reset) before it reads the answer.
+    const outcome = await fetch(`${d.url}/blobs`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: big,
+    }).then(
+      (res) => res.status,
+      () => "reset",
+    );
+    expect([413, "reset"]).toContain(outcome);
+    const id = createHash("sha256").update(big).digest("hex");
+    expect((await fetch(`${d.url}/blobs/${id}`)).status).toBe(404);
   });
 
   it("refuses notes from other sites", async () => {
@@ -267,16 +320,33 @@ describe("NoteStore", () => {
 
 describe("BlobStore", () => {
   it("dedupes by content, refuses when full, and sweeps what's unused", async () => {
-    const blobs = new BlobStore({ maxTotalBytes: 20 });
+    let now = 0;
+    const blobs = new BlobStore({ maxTotalBytes: 20, graceMs: 1000, now: () => now });
     const a = await blobs.put(Buffer.from("hello"));
     expect(a).toBe(sha(new TextEncoder().encode("hello")));
     expect(await blobs.put(Buffer.from("hello"))).toBe(a);
     expect(await blobs.put(Buffer.alloc(100))).toBeUndefined();
     const b = await blobs.put(Buffer.from("world"));
     if (!a || !b) throw new Error("no ids");
+    now = 5000;
     await blobs.sweep(new Set([b]));
     expect(await blobs.has(a)).toBe(false);
     expect(await blobs.has(b)).toBe(true);
+  });
+
+  it("spares a fresh upload from someone else's sweep until it's attached", async () => {
+    let now = 0;
+    const blobs = new BlobStore({ graceMs: 60_000, now: () => now });
+    const fresh = await blobs.put(Buffer.from("just uploaded"));
+    if (!fresh) throw new Error("no id");
+    // Another viewer takes a note down before this upload is pinned to its note.
+    await blobs.sweep(new Set());
+    expect(await blobs.has(fresh)).toBe(true);
+    // Pinned (a sweep sees it in use), then its note is taken down: gone at once.
+    await blobs.sweep(new Set([fresh]));
+    now = 1;
+    await blobs.sweep(new Set());
+    expect(await blobs.has(fresh)).toBe(false);
   });
 
   it("keeps files on disk when given a folder", async () => {

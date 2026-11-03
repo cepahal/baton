@@ -82,6 +82,27 @@ export function Sidebar(props: Props) {
           </section>
         ))}
       </div>
+      <footer className="sidebar-foot">
+        <a
+          className="report-link"
+          href={reportUrl(globalThis.location)}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Report issue
+        </a>
+      </footer>
     </aside>
   );
+}
+
+/**
+ * The "Report issue" page is served by this machine's own daemon, never the
+ * team server, so logs stay local. Viewing a local daemon it's on this page's
+ * origin; viewing a team server it's the local daemon's default port.
+ */
+export function reportUrl(location: Pick<Location, "hostname" | "origin"> | undefined): string {
+  const host = location?.hostname ?? "";
+  const local = host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+  return local && location ? `${location.origin}/report` : "http://127.0.0.1:7777/report";
 }

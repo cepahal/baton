@@ -113,14 +113,15 @@ Every query parameter is optional: `session` defaults to `all`, or can be a
 
 **Server → client:**
 
-| `type`   | Fields                                                       | When                                                                                                                                                                                         |
-| -------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hello`  | `protocol`, `epoch`, `seq` (latest), `session`               | First, and again after each `subscribe`                                                                                                                                                      |
-| `event`  | `seq`, `event: BatonEvent`, `backlog?: true`                 | Replay, then live                                                                                                                                                                            |
-| `gap`    | `fromSeq`, `toSeq`                                           | Before a replay, if those seqs already left the ring buffer                                                                                                                                  |
-| `error`  | `message`                                                    | The client sent something invalid. The connection stays open.                                                                                                                                |
-| `canvas` | `positions` (`{ [key]: { x, y } }`), `removed?`, `snapshot?` | After `hello`, always, with `snapshot: true` and every saved position (the viewer replaces what it held, so nodes removed while it was away disappear); then each change (only what changed) |
-| `notes`  | `notes` (`Note[]`), `removed?`, `snapshot?`                  | After the `canvas` snapshot, with `snapshot: true` and every note; then each change. See [notes.md](notes.md)                                                                                |
+| `type`            | Fields                                                       | When                                                                                                                                                                                         |
+| ----------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hello`           | `protocol`, `epoch`, `seq` (latest), `session`               | First, and again after each `subscribe`                                                                                                                                                      |
+| `event`           | `seq`, `event: BatonEvent`, `backlog?: true`                 | Replay, then live                                                                                                                                                                            |
+| `gap`             | `fromSeq`, `toSeq`                                           | Before a replay, if those seqs already left the ring buffer                                                                                                                                  |
+| `error`           | `message`                                                    | The client sent something invalid. The connection stays open.                                                                                                                                |
+| `canvas`          | `positions` (`{ [key]: { x, y } }`), `removed?`, `snapshot?` | After `hello`, always, with `snapshot: true` and every saved position (the viewer replaces what it held, so nodes removed while it was away disappear); then each change (only what changed) |
+| `notes`           | `notes` (`Note[]`), `removed?`, `snapshot?`                  | After the `canvas` snapshot, with `snapshot: true` and every note; then each change. See [notes.md](notes.md)                                                                                |
+| `session_removed` | `sessionId`                                                  | Someone deleted the session (`DELETE /sessions/:id`): drop its events                                                                                                                        |
 
 **Client → server:** `{ "type": "subscribe", "session": "all" | "<id>",
 "lastSeq"?: n, "epoch"?: "<id>" }` switches subscription on the same socket
@@ -172,7 +173,12 @@ code 1013. An invalid query closes it with 1008.
   (or clears, with `null`) a manual domain label; answers the session's new
   `domain`, 400 for a bad body, 404 for a session the hub doesn't know.
   Overrides live in memory and win over everything else.
+- `DELETE /sessions/:sessionId` removes a session from the hub for everyone
+  (204; 404 if unknown): its events leave the log, its card leaves the canvas,
+  viewers get `session_removed`, and events later sent for it are dropped.
 - `/notes` and `/blobs`: sticky notes and their files; see [notes.md](notes.md).
+- `GET /report` (local daemons only, never a team server): the "Report issue"
+  page, with version info and the last 200 log lines, redacted.
 - `GET /canvas` → `{ positions }`: where viewers put each canvas node.
 - `PUT /canvas/positions` with `{ positions: { [key]: { x, y } }, removed?: [key] }`
   saves moved nodes, forgets removed ones, and broadcasts what changed as a
@@ -186,7 +192,9 @@ code 1013. An invalid query closes it with 1008.
 - `GET /health` → `{ ok, epoch, seq }`.
 - `GET /events?after=<seq>&limit=<n>` → the hub's log in order (see
   [team.md](team.md#get-events)).
-- `GET /` and other paths: the built viewer from `--web-dir` (default
+- `GET /` and other paths: the built viewer from `--web-dir`, served with
+  `VIEWER_CSP` (its own script and images only), `nosniff`, `no-referrer` and
+  `X-Frame-Options: DENY` (default
   `apps/web/dist`, found relative to the daemon's own files, so it only works
   when the daemon runs from this repo). If that directory has no `index.html`,
   the daemon logs a warning and `/` returns a plain-text hint to run

@@ -19,6 +19,7 @@ import type { HandoffDrag } from "./lib/drag.js";
 import { EventStore } from "./lib/event-store.js";
 import { loadSender } from "./lib/handoff-api.js";
 import { randomNoteColor } from "./lib/notes-api.js";
+import { deleteSession } from "./lib/sessions.js";
 import { isLive } from "./lib/time.js";
 
 export function App() {
@@ -198,6 +199,12 @@ export function App() {
             info={openInfo}
             live={openInfo ? isLive(openInfo.lastActivity, now) : false}
             onClose={() => setOpenId(undefined)}
+            onDelete={async () => {
+              await deleteSession(shownId);
+              store.remove(shownId);
+              setOpenId(undefined);
+              setRefresh((r) => r + 1);
+            }}
           />
         </aside>
       )}

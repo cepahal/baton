@@ -120,6 +120,7 @@ export {
   NotesResponse,
   safeFileName,
 } from "./notes/schema.js";
+export { type InlineImageType, looksLikeMarkup, sniffImage } from "./notes/sniff.js";
 export {
   AckMessage,
   CanvasKey,
@@ -141,6 +142,7 @@ export {
   HandoffStatusMessage,
   HelloMessage,
   IngestClientMessage,
+  IngestHelloMessage,
   IngestQuery,
   IngestServerMessage,
   NotesMessage,
@@ -151,11 +153,19 @@ export {
   ServerMessage,
   SessionDomain,
   SessionInfo,
+  SessionRemovedMessage,
   SessionsResponse,
   SubscribeMessage,
   SubscribeQuery,
   Subscription,
+  WhoamiResponse,
 } from "./protocol.js";
+export {
+  maskEventSecrets,
+  maskSecrets,
+  maskSecretsDeep,
+  SECRET_MASK,
+} from "./redact/secrets.js";
 export {
   measureReduction,
   type ReductionOptions,
@@ -187,3 +197,4 @@ export {
   type UserContentLabel,
   type UserTextSegment,
 } from "./transcript/user-content.js";
+export { BATON_VERSION, INGEST_PROTOCOL_VERSION } from "./version.js";

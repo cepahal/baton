@@ -1,0 +1,31 @@
+{
+  "records": [
+    {
+      "handoff": {
+        "id": "h0legacy001",
+        "kind": "snippet",
+        "status": "declined",
+        "sender": "ops",
+        "from": {
+          "sessionId": "legacy-from",
+          "user": "ops",
+          "agent": "claude-code",
+          "repoId": null,
+          "branch": null
+        },
+        "to": {
+          "sessionId": "legacy-to",
+          "user": "ops",
+          "agent": "codex",
+          "repoId": null,
+          "branch": null
+        },
+        "markdown": "# Snippet from before the upgrade\n",
+        "createdAt": "2026-10-30T09:00:00.000Z",
+        "updatedAt": "2026-10-30T09:05:00.000Z"
+      },
+      "fromDaemon": "ops",
+      "toDaemon": "ops"
+    }
+  ]
+}

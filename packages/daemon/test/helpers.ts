@@ -14,7 +14,12 @@ export const SESSION_B = "00000000-0000-4000-8000-00000000000b";
 
 let n = 0;
 /** One transcript line: a user prompt or an assistant reply. */
-export function record(session: string, kind: "user" | "assistant", text: string): string {
+export function record(
+  session: string,
+  kind: "user" | "assistant",
+  text: string,
+  cwd = "/home/dev/proj",
+): string {
   const message =
     kind === "user"
       ? { role: "user", content: text }
@@ -24,7 +29,7 @@ export function record(session: string, kind: "user" | "assistant", text: string
     uuid: `r${++n}`,
     sessionId: session,
     timestamp: new Date(Date.UTC(2026, 10, 1, 12, 0, 0, n)).toISOString(),
-    cwd: "/home/dev/proj",
+    cwd,
     message,
   });
 }

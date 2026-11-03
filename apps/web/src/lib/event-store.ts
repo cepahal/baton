@@ -51,6 +51,14 @@ export class EventStore {
     return true;
   }
 
+  /** Forgets a session (removed from the hub); its listeners see it empty. */
+  remove(sessionId: string): void {
+    if (!this.#sessions.delete(sessionId)) return;
+    this.#dirty.add(sessionId);
+    this.#newSession = true;
+    this.#requestFlush();
+  }
+
   /** A session's events. The same array until the session changes. */
   events(sessionId: string): readonly BatonEvent[] {
     const log = this.#sessions.get(sessionId);

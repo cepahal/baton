@@ -7,17 +7,36 @@
 # daemon would after a supervisor restarts it. The replay keeps writing
 # meanwhile.
 #
-# Env: BATON_TOKEN, BATON_SERVER, NAME, FIXTURE, SPEED, MAX_GAP.
+# What's shared: with REPO set, the session runs in a git checkout of
+# github.com/acme/$REPO and that repo is shared (machines with the same REPO
+# are grouped and linked on the canvas). Otherwise the folder SHARE (default /)
+# is shared; SHARE=/data/elsewhere shares nothing this machine does.
+#
+# Env: BATON_TOKEN, BATON_SERVER, NAME, FIXTURE, SPEED, MAX_GAP, REPO, SHARE.
 set -eu
 cd /app
 baton() { node packages/daemon/dist/index.js "$@"; }
 
-mkdir -p /data/projects /data/codex
+mkdir -p /data/projects /data/codex /data/elsewhere
 rm -f /data/replay.done
+
+if [ -n "${REPO:-}" ]; then
+  work="/work/$REPO"
+  mkdir -p "$work"
+  if [ ! -d "$work/.git" ]; then
+    git -C "$work" init -q -b main
+    git -C "$work" remote add origin "https://github.com/acme/$REPO.git"
+  fi
+  baton share "$work" --state-file /data/state.json
+  set -- --cwd "$work"
+else
+  baton share "${SHARE:-/}" --state-file /data/state.json
+  set --
+fi
 
 (
   baton replay "packages/core/test/fixtures/$FIXTURE" \
-    --projects-dir /data/projects --codex-dir /data/codex --as "$NAME" --seed "$NAME" \
+    --projects-dir /data/projects --codex-dir /data/codex --as "$NAME" --seed "$NAME" "$@" \
     --speed "${SPEED:-20}" --max-gap "${MAX_GAP:-2}" --log-level warn
   touch /data/replay.done
 ) &

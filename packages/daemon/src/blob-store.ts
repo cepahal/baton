@@ -14,14 +14,28 @@ export const BLOBS_MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
  */
 export class BlobStore {
   readonly #memory = new Map<string, Buffer>();
+  /** When each file was last uploaded; sweeps spare recent ones not yet on a note. */
+  readonly #uploaded = new Map<string, number>();
   #total: number | undefined;
 
-  constructor(readonly options: { dir?: string; logger?: Logger; maxTotalBytes?: number } = {}) {}
+  constructor(
+    readonly options: {
+      dir?: string;
+      logger?: Logger;
+      maxTotalBytes?: number;
+      /** How long a fresh upload is safe from sweeps before it's attached. Default 10 minutes. */
+      graceMs?: number;
+      now?: () => number;
+    } = {},
+  ) {}
 
   /** Stores bytes; returns their id, or undefined when the store is full. */
   async put(bytes: Buffer): Promise<string | undefined> {
     const sha256 = createHash("sha256").update(bytes).digest("hex");
-    if (await this.has(sha256)) return sha256;
+    if (await this.has(sha256)) {
+      this.#uploaded.set(sha256, this.#now());
+      return sha256;
+    }
     const total = await this.#totalBytes();
     if (total + bytes.length > (this.options.maxTotalBytes ?? BLOBS_MAX_TOTAL_BYTES)) {
       return undefined;
@@ -36,7 +50,12 @@ export class BlobStore {
       await rename(tmp, join(dir, sha256));
     }
     this.#total = total + bytes.length;
+    this.#uploaded.set(sha256, this.#now());
     return sha256;
+  }
+
+  #now(): number {
+    return (this.options.now ?? Date.now)();
   }
 
   async has(sha256: string): Promise<boolean> {
@@ -62,8 +81,20 @@ export class BlobStore {
     }
   }
 
-  /** Deletes every file not in `keep`. Returns how many went. */
-  async sweep(keep: ReadonlySet<string>): Promise<number> {
+  /**
+   * Deletes every file not in `keepIds`, except fresh uploads not attached to
+   * anything yet: an upload is pinned to its note by a second request, and a
+   * sweep someone else starts in between must not take it. A file that was
+   * attached once gets no grace, so taking its note down removes it at once.
+   * Returns how many went.
+   */
+  async sweep(keepIds: ReadonlySet<string>): Promise<number> {
+    const cutoff = this.#now() - (this.options.graceMs ?? 10 * 60_000);
+    const keep = new Set(keepIds);
+    for (const [id, at] of this.#uploaded) {
+      if (keepIds.has(id) || at < cutoff) this.#uploaded.delete(id);
+      else keep.add(id);
+    }
     let removed = 0;
     const dir = this.options.dir;
     if (dir === undefined) {

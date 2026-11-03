@@ -1,7 +1,25 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { CanvasPositions } from "@baton/core";
+import { CanvasKey, CanvasPoint, type CanvasPositions } from "@baton/core";
 import type { Logger } from "pino";
+import { loadVersioned, saveVersioned, type VersionedSpec } from "./versioned-file.js";
+
+/** The canvas file. Version 0 was a bare `{ key: { x, y } }` object. */
+export const CANVAS_FILE: VersionedSpec<CanvasPositions> = {
+  what: "canvas",
+  version: 1,
+  migrations: [(data) => data],
+  parse: (data) => {
+    if (typeof data !== "object" || data === null || Array.isArray(data)) return undefined;
+    const value: CanvasPositions = {};
+    let dropped = 0;
+    for (const [key, point] of Object.entries(data)) {
+      const k = CanvasKey.safeParse(key);
+      const p = CanvasPoint.safeParse(point);
+      if (k.success && p.success) value[k.data] = p.data;
+      else dropped++;
+    }
+    return { value, dropped };
+  },
+};
 
 /** Most node positions kept; beyond it the least recently moved go. */
 export const MAX_CANVAS_NODES = 5000;
@@ -17,19 +35,12 @@ export class CanvasStore {
 
   constructor(readonly options: { file?: string; logger?: Logger; saveDelayMs?: number } = {}) {}
 
-  /** Reads the saved file, if any. A missing or corrupt file starts empty. */
+  /** Reads the saved file, if any, upgrading older versions (see `loadVersioned`). */
   async load(): Promise<void> {
     const file = this.options.file;
     if (file === undefined) return;
-    try {
-      const parsed = CanvasPositions.safeParse(JSON.parse(await readFile(file, "utf8")));
-      if (parsed.success) this.set(parsed.data);
-      else this.options.logger?.warn({ file }, "ignoring an invalid canvas file");
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        this.options.logger?.warn({ err, file }, "could not read the canvas file");
-      }
-    }
+    const positions = await loadVersioned(file, CANVAS_FILE, this.options.logger);
+    if (positions) this.set(positions);
   }
 
   all(): CanvasPositions {
@@ -88,13 +99,10 @@ export class CanvasStore {
   #save(): void {
     const file = this.options.file;
     if (file === undefined) return;
-    const data = JSON.stringify(this.all());
+    const data = this.all();
     this.#saving = this.#saving.then(async () => {
       try {
-        await mkdir(dirname(file), { recursive: true });
-        const tmp = `${file}.tmp`;
-        await writeFile(tmp, data);
-        await rename(tmp, file);
+        await saveVersioned(file, CANVAS_FILE.version, data);
       } catch (err) {
         this.options.logger?.warn({ err, file }, "could not save the canvas file");
       }

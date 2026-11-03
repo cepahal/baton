@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import { startBackups } from "./backup.js";
 import { BlobStore } from "./blob-store.js";
 import { CanvasStore } from "./canvas-store.js";
 import type { ServeConfig } from "./config.js";
@@ -10,6 +11,7 @@ import { HandoffStore } from "./handoff-store.js";
 import { Hub } from "./hub.js";
 import { modelsFor } from "./models.js";
 import { NoteStore } from "./note-store.js";
+import { RemovedSessions } from "./removed-sessions.js";
 import { createServer } from "./server.js";
 
 export type TeamServer = {
@@ -33,6 +35,10 @@ export async function startTeamServer(
     handoffsFile?: string;
     notesFile?: string;
     blobsDir?: string;
+    /** Sessions removed from the canvas, so their daemons' resends are dropped. */
+    removedFile?: string;
+    /** Where nightly snapshots go. Without it, no backups. */
+    backupDir?: string;
   } = {},
 ): Promise<TeamServer> {
   const hubLogger = logger.child({ component: "hub" });
@@ -60,8 +66,14 @@ export async function startTeamServer(
     ...(options.blobsDir === undefined ? {} : { dir: options.blobsDir }),
     logger: hubLogger,
   });
+  const removed = new RemovedSessions({
+    ...(options.removedFile === undefined ? {} : { file: options.removedFile }),
+    logger: hubLogger,
+  });
+  await removed.load();
   const hub = new Hub({
     notes,
+    removed,
     log,
     activeWindowMs: config.activeMinutes * 60_000,
     logger: hubLogger,
@@ -92,6 +104,22 @@ export async function startTeamServer(
     notes: { blobs, blobsInUse: () => handoffs.attachmentsInUse() },
   });
   await server.listen({ host: config.host, port: config.port });
+  const files = [options.canvasFile, options.handoffsFile, options.notesFile, options.removedFile];
+  const backups =
+    options.backupDir === undefined || options.blobsDir === undefined
+      ? undefined
+      : startBackups({
+          files: files.filter((f): f is string => f !== undefined),
+          blobsDir: options.blobsDir,
+          backupDir: options.backupDir,
+          logger: logger.child({ component: "backup" }),
+          flush: async () => {
+            await canvas.flush();
+            await notes.flush();
+            await store.flush();
+            await removed.flush();
+          },
+        });
   const address = server.server.address();
   const port = typeof address === "object" && address ? address.port : config.port;
   const host = config.host === "0.0.0.0" ? "127.0.0.1" : config.host;
@@ -101,10 +129,13 @@ export async function startTeamServer(
     url: `http://${host}:${port}`,
     port,
     close: async () => {
+      backups?.stop();
+      await backups?.ready;
       await server.close();
       await canvas.flush();
       await notes.flush();
       await store.flush();
+      await removed.flush();
     },
   };
 }

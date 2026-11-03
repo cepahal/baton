@@ -23,7 +23,8 @@ services:
   server:
     build: .
     image: baton-test:latest
-    command: ["serve", "--port", "7777"]
+    entrypoint: ["baton-server"]
+    command: ["--port", "7777"]
     environment:
       BATON_TOKEN: ${BATON_TOKEN:-baton-multi-machine-test-token}
     ports:
@@ -40,10 +41,10 @@ services:
 
   alice:
     <<: *machine
-    environment: { <<: *machine-env, NAME: alice, FIXTURE: heavy-tools.jsonl }
+    environment: { <<: *machine-env, NAME: alice, FIXTURE: heavy-tools.jsonl, REPO: shop }
   bob:
     <<: *machine
-    environment: { <<: *machine-env, NAME: bob, FIXTURE: api-requests.jsonl }
+    environment: { <<: *machine-env, NAME: bob, FIXTURE: api-requests.jsonl, REPO: shop }
   carol:
     <<: *machine
     environment: { <<: *machine-env, NAME: carol, FIXTURE: mixed.jsonl }
@@ -62,3 +63,7 @@ services:
   heidi:
     <<: *machine
     environment: { <<: *machine-env, NAME: heidi, FIXTURE: codex/forked-frontend.rollout.jsonl }
+  # Shares only an empty folder: nothing from its session may reach the server.
+  mallory:
+    <<: *machine
+    environment: { <<: *machine-env, NAME: mallory, FIXTURE: mixed.jsonl, SHARE: /data/elsewhere }

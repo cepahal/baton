@@ -1,8 +1,12 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { Handoff } from "@baton/core";
 import type { Logger } from "pino";
 import { z } from "zod";
+import {
+  loadVersioned,
+  parseRecords,
+  saveVersioned,
+  type VersionedSpec,
+} from "./versioned-file.js";
 
 /** Handoffs kept; beyond it the oldest go. */
 export const MAX_HANDOFFS = 500;
@@ -17,7 +21,16 @@ export const HandoffRecord = z.object({
 });
 export type HandoffRecord = z.infer<typeof HandoffRecord>;
 
-const StoreFile = z.object({ records: z.array(HandoffRecord) });
+/** The handoffs file. Version 0 was `{ records: [...] }`; version 1 is the bare array. */
+export const HANDOFFS_FILE: VersionedSpec<HandoffRecord[]> = {
+  what: "handoffs",
+  version: 1,
+  migrations: [
+    (data) =>
+      typeof data === "object" && data !== null && "records" in data ? data.records : undefined,
+  ],
+  parse: parseRecords(HandoffRecord, MAX_HANDOFFS),
+};
 
 /** Handoffs by id, oldest first. With a file, saved there so they survive restarts. */
 export class HandoffStore {
@@ -29,27 +42,8 @@ export class HandoffStore {
   async load(): Promise<void> {
     const file = this.options.file;
     if (file === undefined) return;
-    let raw: string;
-    try {
-      raw = await readFile(file, "utf8");
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        this.options.logger?.warn({ err, file }, "could not read the handoff file");
-      }
-      return;
-    }
-    let json: unknown;
-    try {
-      json = JSON.parse(raw);
-    } catch {
-      json = undefined;
-    }
-    const parsed = StoreFile.safeParse(json);
-    if (!parsed.success) {
-      this.options.logger?.warn({ file }, "ignoring an invalid handoff file");
-      return;
-    }
-    for (const r of parsed.data.records) this.#records.set(r.handoff.id, r);
+    const records = await loadVersioned(file, HANDOFFS_FILE, this.options.logger);
+    for (const r of records ?? []) this.#records.set(r.handoff.id, r);
   }
 
   get(id: string): HandoffRecord | undefined {
@@ -81,13 +75,10 @@ export class HandoffStore {
   #save(): void {
     const file = this.options.file;
     if (file === undefined) return;
-    const data = JSON.stringify({ records: [...this.#records.values()] });
+    const data = [...this.#records.values()];
     this.#saving = this.#saving.then(async () => {
       try {
-        await mkdir(dirname(file), { recursive: true });
-        const tmp = `${file}.tmp`;
-        await writeFile(tmp, data);
-        await rename(tmp, file);
+        await saveVersioned(file, HANDOFFS_FILE.version, data);
       } catch (err) {
         this.options.logger?.warn({ err, file }, "could not save handoffs");
       }

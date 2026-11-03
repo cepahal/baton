@@ -59,7 +59,10 @@ describe("CanvasStore", () => {
     expect(store.set({ "repo:a": { x: 1, y: 2 } })).toEqual({ "repo:a": { x: 1, y: 2 } });
     expect(store.set({ "repo:a": { x: 1, y: 2 } })).toEqual({});
     await store.flush();
-    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ "repo:a": { x: 1, y: 2 } });
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({
+      version: 1,
+      data: { "repo:a": { x: 1, y: 2 } },
+    });
 
     const again = new CanvasStore({ file });
     await again.load();
@@ -83,7 +86,10 @@ describe("CanvasStore", () => {
     store.set({ "session:a": { x: 1, y: 2 }, "session:b": { x: 3, y: 4 } });
     expect(store.remove(["session:a", "session:nope"])).toEqual(["session:a"]);
     await store.flush();
-    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ "session:b": { x: 3, y: 4 } });
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({
+      version: 1,
+      data: { "session:b": { x: 3, y: 4 } },
+    });
   });
 
   it("forgets the least recently moved nodes past the cap", () => {

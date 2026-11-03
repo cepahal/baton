@@ -72,6 +72,12 @@ export type GapMessage = z.infer<typeof GapMessage>;
 export const ErrorMessage = z.object({
   type: z.literal("error"),
   message: z.string(),
+  /**
+   * Why, when the client should act on it rather than just log it:
+   * `version` (update Baton) and `name_taken` (pick another `--name`) mean
+   * reconnecting won't help.
+   */
+  code: z.enum(["version", "name_taken"]).optional(),
 });
 export type ErrorMessage = z.infer<typeof ErrorMessage>;
 
@@ -130,6 +136,23 @@ export const NotesMessage = z.object({
 });
 export type NotesMessage = z.infer<typeof NotesMessage>;
 
+/** A session was removed from the hub (by any viewer); viewers drop its events. */
+export const SessionRemovedMessage = z.object({
+  type: z.literal("session_removed"),
+  sessionId: z.string().min(1),
+});
+export type SessionRemovedMessage = z.infer<typeof SessionRemovedMessage>;
+
+/** `GET /whoami` on a team server: the token works, and what the server runs. */
+export const WhoamiResponse = z.object({
+  ok: z.literal(true),
+  app: z.string(),
+  protocol: z.number().int().positive(),
+  /** Server clock, ISO; `baton doctor` compares it with the local one. */
+  now: z.iso.datetime({ offset: true }),
+});
+export type WhoamiResponse = z.infer<typeof WhoamiResponse>;
+
 export const ServerMessage = z.discriminatedUnion("type", [
   HelloMessage,
   EventMessage,
@@ -138,6 +161,7 @@ export const ServerMessage = z.discriminatedUnion("type", [
   CanvasMessage,
   HandoffMessage,
   NotesMessage,
+  SessionRemovedMessage,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
 
@@ -225,7 +249,18 @@ export const DaemonName = z
 export type DaemonName = z.infer<typeof DaemonName>;
 
 /** `/ingest` WebSocket URL query. The team token goes in an `Authorization: Bearer` header. */
-export const IngestQuery = z.object({ name: DaemonName });
+export const IngestQuery = z.object({
+  name: DaemonName,
+  /** `INGEST_PROTOCOL_VERSION` the daemon speaks. Daemons from before it existed send none. */
+  protocol: z.coerce.number().int().positive().optional(),
+  /** The daemon's `BATON_VERSION`, for "please update" messages and logs. */
+  app: z.string().max(64).optional(),
+  /** Random id kept in the daemon's state dir: tells a reconnect from another machine using the same name. */
+  machine: z
+    .string()
+    .regex(/^[0-9a-f]{32}$/)
+    .optional(),
+});
 export type IngestQuery = z.infer<typeof IngestQuery>;
 
 /** A batch of events, in the order the daemon published them. */
@@ -278,7 +313,16 @@ export const HandoffOfferMessage = z.object({
 });
 export type HandoffOfferMessage = z.infer<typeof HandoffOfferMessage>;
 
+/** First message on an accepted `/ingest` connection: who the daemon is talking to. */
+export const IngestHelloMessage = z.object({
+  type: z.literal("ingest_hello"),
+  protocol: z.number().int().positive(),
+  app: z.string(),
+});
+export type IngestHelloMessage = z.infer<typeof IngestHelloMessage>;
+
 export const IngestServerMessage = z.discriminatedUnion("type", [
+  IngestHelloMessage,
   AckMessage,
   ErrorMessage,
   HandoffOfferMessage,

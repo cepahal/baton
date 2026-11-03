@@ -1,13 +1,14 @@
 import {
   BlobId,
   type BlobResponse,
-  isInlineImage,
+  looksLikeMarkup,
   NOTE_FILE_MAX_BYTES,
   NoteCreate,
   NoteId,
   NotePatch,
   type NoteResponse,
   type NotesResponse,
+  sniffImage,
 } from "@baton/core";
 import type {
   FastifyInstance,
@@ -30,19 +31,19 @@ export type NoteRouteOptions = {
 const IdParams = z.object({ id: NoteId });
 const BlobParams = z.object({ sha256: BlobId });
 const BlobQuery = z.object({
+  /** Ignored: how a file is served comes from its bytes. Kept so older viewers' URLs work. */
   type: z.string().max(100).optional(),
   name: z.string().max(200).optional(),
   download: z.literal("1").optional(),
 });
 
-/** MIME types are echoed back only when they look like one. */
-const MIME = /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i;
-
 /**
  * Sticky notes (`/notes`) and their files (`/blobs`). Every change is
- * broadcast to viewers as a `notes` message. Files are content-addressed and
- * served with `nosniff` and a sandboxing CSP so an upload can't run as the
- * viewer's page.
+ * broadcast to viewers as a `notes` message. Files are content-addressed.
+ * Only PNG, JPEG, GIF and WebP, recognized by their magic bytes (never by
+ * what the uploader claims), are shown inline; everything else is a download
+ * served with `nosniff` and a sandboxing CSP. HTML and SVG documents are
+ * refused at upload.
  */
 type BatonApp = FastifyInstance<
   RawServerDefault,
@@ -108,9 +109,16 @@ export function registerNoteRoutes(app: BatonApp, options: NoteRouteOptions): vo
     if (!Buffer.isBuffer(req.body)) {
       return reply.code(415).send({ error: "send the file as application/octet-stream" });
     }
+    if (looksLikeMarkup(req.body)) {
+      return reply
+        .code(415)
+        .send({ error: "HTML and SVG files can't be attached; zip them or paste the text" });
+    }
     const sha256 = await blobs.put(req.body);
     if (!sha256) return reply.code(507).send({ error: "the hub's file store is full" });
-    return reply.code(201).send({ sha256, size: req.body.length } satisfies BlobResponse);
+    const image = sniffImage(req.body);
+    const body: BlobResponse = { sha256, size: req.body.length, ...(image ? { image } : {}) };
+    return reply.code(201).send(body);
   });
 
   app.get("/blobs/:sha256", async (req, reply) => {
@@ -118,12 +126,11 @@ export function registerNoteRoutes(app: BatonApp, options: NoteRouteOptions): vo
     const query = BlobQuery.safeParse(req.query);
     const bytes = params.success ? await blobs.read(params.data.sha256) : undefined;
     if (!bytes) return reply.code(404).send({ error: "no such file" });
-    const type =
-      query.success && query.data.type && MIME.test(query.data.type) ? query.data.type : "";
-    const inline = type !== "" && isInlineImage(type) && !(query.success && query.data.download);
+    const image = sniffImage(bytes);
+    const inline = image !== undefined && !(query.success && query.data.download);
     const name = (query.success ? query.data.name : undefined) ?? "file";
     return reply
-      .header("content-type", inline ? type : "application/octet-stream")
+      .header("content-type", inline ? image : "application/octet-stream")
       .header("x-content-type-options", "nosniff")
       .header("content-security-policy", "default-src 'none'; sandbox")
       .header("cache-control", "private, max-age=31536000, immutable")

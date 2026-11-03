@@ -9,6 +9,7 @@ import {
   type EventsResponse,
   PROTOCOL_VERSION,
   projectName,
+  type RepoInfo,
   type ServerMessage,
   type SessionInfo,
   type Subscription,
@@ -18,6 +19,7 @@ import type { Logger } from "pino";
 import { CanvasStore } from "./canvas-store.js";
 import type { EventLog, LogEntry } from "./event-log.js";
 import { NoteStore } from "./note-store.js";
+import { RemovedSessions } from "./removed-sessions.js";
 import { SessionContracts } from "./session-contracts.js";
 import { type DomainTieBreaker, repoRoot, SessionDomains } from "./session-domains.js";
 import { SessionFiles } from "./session-files.js";
@@ -53,6 +55,8 @@ export type HubOptions = {
   notes?: NoteStore;
   /** Shown as the user of sessions without a `source` (the local OS user). */
   user?: string;
+  /** Sessions removed by a viewer; their events are dropped. Default: in memory only. */
+  removed?: RemovedSessions;
 };
 
 type SubscribeRequest = {
@@ -81,6 +85,8 @@ type SessionState = {
   events: number;
   /** Daemon the session streams from, on a team server. */
   source?: string;
+  /** The repo it was last seen in, kept while its latest folder has none known. */
+  repo?: RepoInfo;
 };
 
 /** Close code for a client that can't keep up (RFC 6455 "try again later"). */
@@ -103,6 +109,7 @@ export class Hub implements EventSink {
   readonly #files = new SessionFiles();
   readonly #contracts = new SessionContracts();
   readonly #canvas: CanvasStore;
+  readonly #removed: RemovedSessions;
   /** The canvas's sticky notes; routes change them and broadcast `notes` messages. */
   readonly notes: NoteStore;
   readonly #clients = new Set<Client>();
@@ -119,6 +126,7 @@ export class Hub implements EventSink {
     this.#now = options.now ?? Date.now;
     this.#domains = new SessionDomains(options.tieBreaker);
     this.#canvas = options.canvas ?? new CanvasStore();
+    this.#removed = options.removed ?? new RemovedSessions();
     this.notes = options.notes ?? new NoteStore();
   }
 
@@ -145,8 +153,13 @@ export class Hub implements EventSink {
    */
   accept(events: readonly BatonEvent[], options: PublishOptions = {}): number {
     let accepted = 0;
-    for (const [dir, repo] of Object.entries(options.repos ?? {})) this.#domains.setRepo(dir, repo);
+    for (const [dir, repo] of Object.entries(options.repos ?? {})) {
+      this.#domains.setRepo(dir, repo);
+      if (!repo.repoId) continue;
+      for (const s of this.#sessions.values()) if (s.projectPath === dir) s.repo = repo;
+    }
     for (const event of events) {
+      if (this.#removed.has(event.sessionId)) continue; // removed by a viewer: stays gone
       const entry = this.#log.append(event, options.backlog ?? false);
       if (!entry) continue; // already held, e.g. history published again
       accepted++;
@@ -240,6 +253,29 @@ export class Hub implements EventSink {
       .flatMap((e) => (e.event.sessionId === sessionId ? [e.event] : []));
   }
 
+  /**
+   * Removes a session for everyone: its events, its card, and anything later
+   * sent for it. Any viewer may do this (the team shares one token). Returns
+   * false for a session the hub doesn't know.
+   */
+  removeSession(sessionId: string): boolean {
+    const known = this.#sessions.has(sessionId);
+    const dropped = this.#log.forgetSession(sessionId);
+    if (!known && dropped === 0) return false;
+    this.#sessions.delete(sessionId);
+    this.#domains.forget(sessionId);
+    this.#files.forget(sessionId);
+    this.#contracts.forget(sessionId);
+    this.#removed.add(sessionId);
+    const key = `session:${sessionId}`;
+    if (this.#canvas.remove([key]).length > 0) {
+      this.broadcast({ type: "canvas", positions: {}, removed: [key] });
+    }
+    this.broadcast({ type: "session_removed", sessionId });
+    this.options.logger.info({ sessionId, events: dropped }, "session removed by a viewer");
+    return true;
+  }
+
   /** Sends a message to every connected viewer. */
   broadcast(message: ServerMessage): void {
     const data = JSON.stringify(message);
@@ -255,7 +291,7 @@ export class Hub implements EventSink {
       lastActivity: s.lastActivity,
       events: s.events,
       ...(s.source === undefined ? {} : { source: s.source }),
-      ...this.#repoField(s.projectPath),
+      ...this.#sessionRepo(s),
       domain: this.#domains.domain(sessionId, s.projectPath),
       ...((s.source ?? this.options.user) ? { user: s.source ?? this.options.user } : {}),
       ...this.#filesField(sessionId, s.projectPath),
@@ -317,9 +353,16 @@ export class Hub implements EventSink {
     return changed;
   }
 
-  #repoField(projectPath: string): Pick<SessionInfo, "repo"> {
-    const repo = this.#domains.repo(projectPath);
-    return repo ? { repo } : {};
+  /**
+   * A session's repo: its latest folder's, or the last one it had. An agent
+   * that moves to a folder git can't place (a deleted worktree, a path its
+   * log spells oddly) stays in its repo's group on the canvas.
+   */
+  #sessionRepo(s: SessionState): Pick<SessionInfo, "repo"> {
+    const repo = this.#domains.repo(s.projectPath);
+    if (repo?.repoId) s.repo = repo;
+    const shown = repo?.repoId ? repo : (s.repo ?? repo);
+    return shown ? { repo: shown } : {};
   }
 
   /** Pins a session's domain label (`null` clears it). False for an unknown session. */
@@ -446,7 +489,12 @@ export class Hub implements EventSink {
     s.events++;
     if (source !== undefined) s.source = source;
     s.seenMs = seenMs;
-    if (event.projectPath) s.projectPath = event.projectPath;
+    if (event.projectPath) {
+      // Before moving on, remember the repo of the folder it's leaving.
+      const known = this.#domains.repo(s.projectPath);
+      if (known?.repoId) s.repo = known;
+      s.projectPath = event.projectPath;
+    }
     if (ms >= s.lastMs) {
       s.lastMs = ms;
       s.lastActivity = event.ts;

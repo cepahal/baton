@@ -5,6 +5,7 @@ import {
   type HandoffMessage,
   type NotesMessage,
   ServerMessage,
+  type SessionRemovedMessage,
 } from "@baton/core";
 import { type BackoffOptions, backoffDelay, DEFAULT_BACKOFF } from "./backoff.js";
 
@@ -46,6 +47,8 @@ export type ConnectionOptions = {
   onHandoff?(message: HandoffMessage): void;
   /** Sticky notes: every note after connecting, then each change. */
   onNotes?(message: NotesMessage): void;
+  /** Someone removed a session from the hub. */
+  onSessionRemoved?(message: SessionRemovedMessage): void;
   createSocket?: SocketFactory;
   backoff?: BackoffOptions;
   /**
@@ -230,6 +233,9 @@ export class ConnectionManager {
         return;
       case "notes":
         this.#options.onNotes?.(message);
+        return;
+      case "session_removed":
+        this.#options.onSessionRemoved?.(message);
         return;
     }
   }

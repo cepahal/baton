@@ -1,4 +1,5 @@
-import { dirname } from "node:path";
+import { access } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import Fastify, { LogController } from "fastify";
 import type { Logger } from "pino";
 import { type DaemonConfig, HOST, type RemoteConfig } from "./config.js";
@@ -6,11 +7,15 @@ import { DiskQueue } from "./disk-queue.js";
 import { type HandoffDeps, inboxOptions } from "./handoff-kit.js";
 import { registerInboxRoutes } from "./handoff-routes.js";
 import { Inbox } from "./inbox.js";
+import { logFilePath } from "./logging.js";
+import { loadMachineId } from "./machine-id.js";
 import { remoteBlobFetcher } from "./remote-blobs.js";
 import { RemoteSink } from "./remote-sink.js";
 import { RepoResolver } from "./repo-info.js";
 import { RepoTaggingSink } from "./repo-sink.js";
+import { registerReportRoute } from "./report-page.js";
 import { isLocalRequest } from "./server.js";
+import { SharingPolicy, SharingSink } from "./sharing.js";
 import { logSources } from "./sources.js";
 import { StateStore } from "./state-store.js";
 import { TranscriptWatcher } from "./watcher.js";
@@ -21,6 +26,7 @@ export type Forwarder = {
   /** `http://127.0.0.1:<port>` of the local confirm pages. */
   inboxUrl: string;
   watcher: TranscriptWatcher;
+  sharing: SharingPolicy;
   /** Stops watching, saves offsets, and disconnects. Unsent events stay queued on disk. */
   close(): Promise<void>;
 };
@@ -34,14 +40,30 @@ export async function startForwarder(
   config: DaemonConfig,
   remote: RemoteConfig,
   logger: Logger,
-  deps: HandoffDeps = {},
+  deps: HandoffDeps & { onRefused?: (message: string) => void } = {},
 ): Promise<Forwarder> {
+  const stateDir = dirname(config.stateFile);
+  const sharingFile = sharingFilePath(config.stateFile);
+  const firstSharingRun = await access(sharingFile).then(
+    () => false,
+    () => true,
+  );
   const state = await StateStore.load(config.stateFile, logger.child({ component: "state" }));
   const queue = await DiskQueue.open({
     dir: remote.queueDir,
     maxBytes: remote.queueMb * 1024 * 1024,
     logger: logger.child({ component: "queue" }),
   });
+  if (firstSharingRun && queue.size > 0) {
+    // Queued by a Baton from before sharing controls, when everything was sent:
+    // none of it was chosen, so none of it goes.
+    logger.warn(
+      { events: queue.size },
+      "dropping events queued by an older Baton before sharing controls existed",
+    );
+    await queue.ack(queue.size);
+  }
+  const machine = await loadMachineId(join(stateDir, "machine-id"));
   let inboxPort = config.port;
   let sink: RemoteSink | undefined;
   const inboxLogger = logger.child({ component: "inbox" });
@@ -61,6 +83,11 @@ export async function startForwarder(
     }
   });
   registerInboxRoutes(local, inbox);
+  registerReportRoute(local, {
+    logFile: logFilePath(stateDir, "daemon"),
+    secrets: [remote.token],
+    facts: { mode: "team daemon", server: remote.server, name: remote.name },
+  });
   await local.listen({ host: HOST, port: config.port });
   const address = local.server.address();
   inboxPort = typeof address === "object" && address ? address.port : config.port;
@@ -72,12 +99,31 @@ export async function startForwarder(
     queue,
     logger: logger.child({ component: "remote" }),
     onHandoff: (message) => inbox.receive(message),
+    machine,
+    ...(deps.onRefused ? { onRefused: deps.onRefused } : {}),
   });
   sink.start();
 
+  const resolver = new RepoResolver();
+  const sharing = new SharingPolicy({
+    file: sharingFile,
+    repoOf: (dir) => resolver.resolve(dir),
+    logger: logger.child({ component: "sharing" }),
+  });
+  const shared = await sharing.current();
+  if (shared.paused) logger.warn("sharing is paused: nothing is sent (`baton resume` to resume)");
+  else if (shared.repos.length === 0 && shared.folders.length === 0) {
+    logger.warn(
+      "no repos are shared yet, so nothing is sent: run `baton share` in a repo to share it",
+    );
+  }
   const watcher = new TranscriptWatcher({
     sources: logSources({ "claude-code": config.projectsDir, codex: config.codexDir }),
-    sink: new RepoTaggingSink(sink, new RepoResolver()),
+    sink: new SharingSink(
+      new RepoTaggingSink(sink, resolver),
+      sharing,
+      logger.child({ component: "sharing" }),
+    ),
     state,
     logger: logger.child({ component: "watcher" }),
     backlogPerSession: config.backlog === "all" ? Number.POSITIVE_INFINITY : config.backlog,
@@ -105,5 +151,9 @@ export async function startForwarder(
     })();
     return closing;
   };
-  return { sink, inbox, inboxUrl: `http://${HOST}:${inboxPort}`, watcher, close };
+  return { sink, inbox, inboxUrl: `http://${HOST}:${inboxPort}`, watcher, sharing, close };
 }
+
+/** The sharing file sits next to the state file. */
+export const sharingFilePath = (stateFile: string): string =>
+  join(dirname(stateFile), "sharing.json");

@@ -1,14 +1,17 @@
 import {
+  BATON_VERSION,
   CanvasMoveBody,
   type CanvasResponse,
   DomainOverrideBody,
   EventsQuery,
   type EventsResponse,
+  INGEST_PROTOCOL_VERSION,
   IngestClientMessage,
   IngestQuery,
   type IngestServerMessage,
   type SessionsResponse,
   SubscribeQuery,
+  type WhoamiResponse,
 } from "@baton/core";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
@@ -36,6 +39,7 @@ import type { Hub } from "./hub.js";
 import type { Inbox } from "./inbox.js";
 import { LOGIN_PAGE } from "./login-page.js";
 import { type NoteRouteOptions, registerNoteRoutes } from "./note-routes.js";
+import { registerReportRoute } from "./report-page.js";
 
 /** Close code for a request the server refuses (RFC 6455 "policy violation"). */
 const CLOSE_POLICY = 1008;
@@ -89,6 +93,8 @@ export type ServerOptions = {
   inbox?: Inbox;
   /** Sticky notes' files (`/notes`, `/blobs`). Without it there are no notes routes. */
   notes?: Omit<NoteRouteOptions, "hub">;
+  /** The "Report issue" page (`/report`). Never on a team server: logs stay on their machine. */
+  report?: Parameters<typeof registerReportRoute>[1];
 };
 
 export type { HandoffRoute };
@@ -104,6 +110,7 @@ const API_PATHS = new Set([
   "/handoffs",
   "/canvas",
   "/notes",
+  "/whoami",
 ]);
 /** Prefixes whose subpaths also answer with data. */
 const API_PREFIXES = ["/notes/", "/blobs/", "/handoffs/", "/canvas/", "/sessions/"];
@@ -113,6 +120,23 @@ function isApiPath(pathname: string): boolean {
 }
 
 const LoginBody = z.object({ token: z.string().min(1).max(1024) });
+
+/**
+ * The viewer renders teammates' text (notes, replies), so its page may only
+ * run its own script, load images from itself, and talk to its own hub.
+ * Inline styles are allowed: React Flow positions nodes with them.
+ */
+export const VIEWER_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
 
 const NO_VIEWER =
   "Baton is running, but the viewer isn't built. Run `pnpm build`, then restart `baton start`.\n";
@@ -169,6 +193,17 @@ export async function createServer(hub: Hub, logger: Logger, options: ServerOpti
       return reply.header("set-cookie", sessionCookieHeader(team.token)).send({ ok: true });
     });
 
+    // For `baton doctor`: proves the token works and reports the server's version and clock.
+    app.get(
+      "/whoami",
+      async (): Promise<WhoamiResponse> => ({
+        ok: true,
+        app: BATON_VERSION,
+        protocol: INGEST_PROTOCOL_VERSION,
+        now: new Date().toISOString(),
+      }),
+    );
+
     registerIngest(app, hub, logger, options);
   } else
     app.addHook("onRequest", async (req, reply) => {
@@ -223,6 +258,14 @@ export async function createServer(hub: Hub, logger: Logger, options: ServerOpti
     return session?.domain ?? { label: body.data.label };
   });
 
+  // Anyone on the hub may remove a session for everyone (see docs/what-baton-shares.md).
+  app.delete<{ Params: { sessionId: string } }>("/sessions/:sessionId", async (req, reply) => {
+    if (!hub.removeSession(req.params.sessionId)) {
+      return reply.code(404).send({ error: "unknown session" });
+    }
+    return reply.code(204).send();
+  });
+
   // The shared canvas: which session cards are on it, and where.
   app.get("/canvas", async (): Promise<CanvasResponse> => ({ positions: hub.canvasPositions() }));
   app.put("/canvas/positions", async (req, reply) => {
@@ -251,12 +294,22 @@ export async function createServer(hub: Hub, logger: Logger, options: ServerOpti
   if (options.notes) registerNoteRoutes(app, { hub, ...options.notes });
   // Confirm pages act on this machine, so a server reachable from elsewhere never has them.
   if (options.inbox && !team) registerInboxRoutes(app, options.inbox);
+  if (options.report && !team) registerReportRoute(app, options.report);
 
   if (options.webDir === undefined) {
     app.get("/", async (_req, reply) => reply.type("text/plain").send(NO_VIEWER));
   } else {
     // Registered last; the routes above are more specific and win.
-    await app.register(fastifyStatic, { root: options.webDir, prefix: "/" });
+    await app.register(fastifyStatic, {
+      root: options.webDir,
+      prefix: "/",
+      setHeaders: (res) => {
+        res.header("content-security-policy", VIEWER_CSP);
+        res.header("x-content-type-options", "nosniff");
+        res.header("referrer-policy", "no-referrer");
+        res.header("x-frame-options", "DENY");
+      },
+    });
   }
 
   return app;
@@ -279,7 +332,31 @@ function registerIngest(app: TeamApp, hub: Hub, logger: Logger, options: ServerO
       return;
     }
     const source = query.data.name;
-    const log = logger.child({ daemon: source });
+    const log = logger.child({ daemon: source, app: query.data.app });
+    const refusal = versionRefusal(query.data.protocol, query.data.app);
+    if (refusal) {
+      log.warn({ protocol: query.data.protocol }, "refused a daemon on another protocol version");
+      send(socket, { type: "error", code: "version", message: refusal });
+      socket.close(CLOSE_POLICY, "version mismatch");
+      return;
+    }
+    const machine = query.data.machine;
+    if (machine === undefined) {
+      send(socket, { type: "error", message: "invalid query: missing machine id" });
+      socket.close(CLOSE_POLICY, "invalid query");
+      return;
+    }
+    if (options.ingestRoute && !options.ingestRoute.attach(source, socket, machine)) {
+      log.warn("refused a second machine using a connected daemon's name");
+      send(socket, {
+        type: "error",
+        code: "name_taken",
+        message: `Another machine is already connected as "${source}". Restart with --name <a name of your own>.`,
+      });
+      socket.close(CLOSE_POLICY, "name taken");
+      return;
+    }
+    send(socket, { type: "ingest_hello", protocol: INGEST_PROTOCOL_VERSION, app: BATON_VERSION });
     log.info("daemon connected");
 
     let alive = true;
@@ -295,7 +372,6 @@ function registerIngest(app: TeamApp, hub: Hub, logger: Logger, options: ServerO
     socket.on("pong", () => {
       alive = true;
     });
-    options.ingestRoute?.attach(source, socket);
     options.handoffs?.daemonConnected(source);
 
     socket.on("message", (data, isBinary) => {
@@ -324,6 +400,22 @@ function registerIngest(app: TeamApp, hub: Hub, logger: Logger, options: ServerO
       log.info("daemon disconnected");
     });
   });
+}
+
+/**
+ * Why a daemon speaking `protocol` can't use this server, or undefined if it
+ * can. Daemons from before versioning send no protocol and are told to update.
+ */
+export function versionRefusal(
+  protocol: number | undefined,
+  app: string | undefined,
+): string | undefined {
+  if (protocol === INGEST_PROTOCOL_VERSION) return undefined;
+  const theirs = app ? `Baton ${app}` : "an older Baton";
+  if (protocol === undefined || protocol < INGEST_PROTOCOL_VERSION) {
+    return `This daemon runs ${theirs}, which is too old for this team server (Baton ${BATON_VERSION}). Please update Baton (see "Updating" in the README) and start it again.`;
+  }
+  return `The team server runs Baton ${BATON_VERSION}, which is older than this daemon (${theirs}). Ask whoever runs the team server to update it.`;
 }
 
 function parseIngest(text: string): IngestClientMessage | undefined {

@@ -68,13 +68,12 @@ export async function uploadFile(file: File): Promise<NoteFile> {
     body: file,
   });
   if (!res.ok) throw await failure(res, `Couldn't upload ${file.name}`);
-  const { sha256, size } = BlobResponse.parse(await res.json());
-  return {
-    sha256,
-    name: (file.name || "file").slice(0, 200),
-    mime: (file.type || "application/octet-stream").slice(0, 100),
-    size,
-  };
+  const { sha256, size, image } = BlobResponse.parse(await res.json());
+  // The hub read the bytes: use its image type, and never label a non-image as one.
+  const claimed = (file.type || "application/octet-stream").slice(0, 100);
+  const mime =
+    image ?? (claimed.toLowerCase().startsWith("image/") ? "application/octet-stream" : claimed);
+  return { sha256, name: (file.name || "file").slice(0, 200), mime, size };
 }
 
 /** Where a note file is served: inline for images, a download otherwise. */

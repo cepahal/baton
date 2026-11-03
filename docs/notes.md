@@ -49,7 +49,7 @@ hub. Past a cap the hub answers 409 (notes) or 507 (files).
 | `POST /notes`        | `{ x, y, color, text?, author? }` → 201 `{ note }`                               |
 | `PATCH /notes/:id`   | any of `{ x, y, color, text, files }` → `{ note }`; files must be uploaded first |
 | `DELETE /notes/:id`  | 204                                                                              |
-| `POST /blobs`        | raw bytes, `application/octet-stream`, ≤ 10 MB → 201 `{ sha256, size }`          |
+| `POST /blobs`        | raw bytes, `application/octet-stream`, ≤ 10 MB → 201 `{ sha256, size, image? }`  |
 | `GET /blobs/:sha256` | `?type=&name=&download=1`; see below                                             |
 
 Every change goes to every viewer as `{ type: "notes", notes, removed? }`.
@@ -57,10 +57,20 @@ After `hello` (and the `canvas` snapshot) each viewer gets
 `{ type: "notes", notes, snapshot: true }`, which replaces what it held.
 
 Files are served with `X-Content-Type-Options: nosniff` and
-`Content-Security-Policy: default-src 'none'; sandbox`. Only PNG, JPEG, GIF and
-WebP are sent inline with their type. Everything else, SVG and HTML included,
-is sent as an `application/octet-stream` attachment, so a note can't run script
-in the viewer's origin.
+`Content-Security-Policy: default-src 'none'; sandbox`. What a file is comes
+from its **bytes**, never from the uploader: `POST /blobs` answers with
+`image` when the magic bytes say PNG, JPEG, GIF or WebP, and only those are
+served inline, with that type. `?type=` on `GET /blobs` is ignored. Everything
+else is an `application/octet-stream` attachment, and HTML and SVG documents
+are refused at upload (415), so a note can't run script in the viewer's origin.
+A fresh upload not yet pinned to a note is safe from cleanup for 10 minutes;
+once pinned, it goes as soon as no note or pending handoff needs it.
+
+A note's text is rendered as markdown by the viewer's `Markdown` component:
+raw HTML shows as text, links keep only safe protocols (no `javascript:`,
+`vbscript:` or `data:`) and open in a new tab, and images show only when they
+are this hub's own `/blobs/` files. `apps/web/test/markdown.test.tsx` runs the
+XSS payloads it must survive.
 
 On a team server these routes need the token, like every other route. When a
 daemon accepts a note handoff from the team server, it fetches each file from

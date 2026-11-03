@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventsResponse, parseSession, SessionsResponse } from "../../packages/core/dist/index.js";
-import { BASE_URL, COMPOSE_FILE, FLEET, PROJECT, TOKEN } from "./fleet.mjs";
+import { BASE_URL, COMPOSE_FILE, FLEET, PRIVATE_MACHINE, PROJECT, TOKEN } from "./fleet.mjs";
 
 const ROOT = join(import.meta.dirname, "../..");
 const FIXTURES = join(ROOT, "packages/core/test/fixtures");
@@ -44,11 +44,14 @@ export const compose = (args, options) =>
   run("docker", ["compose", "-f", COMPOSE_FILE, "-p", PROJECT, ...args], options);
 
 /** Brings the stack up, runs `body`, and always tears it down unless `keep`. */
-export async function withStack({ env = {}, keep = false }, body) {
-  log("building and starting 1 server + 6 machines");
+export async function withStack(
+  { env = {}, keep = false, machines = FLEET.map((m) => m.name) },
+  body,
+) {
+  log(`building and starting 1 server + ${machines.length + 1} machines (1 shares nothing)`);
   try {
     await compose(["up", "-d", "--build", "--wait", "server"], { env, quiet: true });
-    await compose(["up", "-d", ...FLEET.map((m) => m.name)], { env, quiet: true });
+    await compose(["up", "-d", ...machines, PRIVATE_MACHINE], { env, quiet: true });
     return await body();
   } catch (error) {
     log("failed; last server and machine logs:");
@@ -65,7 +68,7 @@ export async function withStack({ env = {}, keep = false }, body) {
   }
 }
 
-async function api(path) {
+export async function api(path) {
   const res = await fetch(`${BASE_URL}${path}`, { headers: { authorization: `Bearer ${TOKEN}` } });
   if (!res.ok) throw new Error(`GET ${path}: HTTP ${res.status}`);
   return res.json();

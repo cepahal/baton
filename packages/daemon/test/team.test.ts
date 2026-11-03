@@ -5,9 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { resolveServeConfig } from "../src/config.js";
 import { DiskQueue } from "../src/disk-queue.js";
-import { startForwarder } from "../src/forwarder.js";
+import { sharingFilePath, startForwarder } from "../src/forwarder.js";
 import { mergeByTime } from "../src/merge.js";
 import { ingestUrl, RemoteSink } from "../src/remote-sink.js";
+import { writeSharing } from "../src/sharing.js";
 import { startTeamServer, type TeamServer } from "../src/team-server.js";
 import { record, SESSION_A, SESSION_B, silent, tempProjects } from "./helpers.js";
 
@@ -289,7 +290,18 @@ describe("team server", () => {
       queueMb: 1,
     };
     const file = dirs.transcript(SESSION_A);
-    await dirs.append(file, `${record(SESSION_A, "user", "hello")}\n`);
+    // Only /home/dev/proj is shared; SESSION_B, in another folder, must never arrive.
+    await writeSharing(sharingFilePath(dirs.stateFile), {
+      paused: false,
+      repos: [],
+      folders: ["/home/dev/proj"],
+    });
+    const key = `gh${"p_"}${"k".repeat(36)}`;
+    await dirs.append(file, `${record(SESSION_A, "user", `hello, my key is ${key}`)}\n`);
+    await dirs.append(
+      dirs.transcript(SESSION_B),
+      `${record(SESSION_B, "user", "private work", "/home/dev/private")}\n`,
+    );
 
     const first = await startForwarder(config, remote, silent);
     await until(async () => (await allEvents(server)).length >= 2, "first events");
@@ -305,6 +317,8 @@ describe("team server", () => {
     const events = await allEvents(server);
     const ids = events.map((m) => m.event.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(events.map((m) => m.event.text)).toContain("hello");
+    expect(events.map((m) => m.event.text)).toContain("hello, my key is [redacted]");
+    expect(events.some((m) => m.event.sessionId === SESSION_B)).toBe(false);
+    expect(JSON.stringify(events)).not.toContain(key);
   });
 });
