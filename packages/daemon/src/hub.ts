@@ -1,7 +1,10 @@
 import {
   type AgentId,
   type BatonEvent,
+  type CanvasMessage,
+  type CanvasPositions,
   ClientMessage,
+  type DomainLabel,
   type EventMessage,
   type EventsResponse,
   PROTOCOL_VERSION,
@@ -9,9 +12,14 @@ import {
   type ServerMessage,
   type SessionInfo,
   type Subscription,
+  type TouchedFile,
 } from "@baton/core";
 import type { Logger } from "pino";
+import { CanvasStore } from "./canvas-store.js";
 import type { EventLog, LogEntry } from "./event-log.js";
+import { SessionContracts } from "./session-contracts.js";
+import { type DomainTieBreaker, repoRoot, SessionDomains } from "./session-domains.js";
+import { SessionFiles } from "./session-files.js";
 import type { EventSink, PublishOptions } from "./sink.js";
 
 /** What the hub needs from a WebSocket. */
@@ -26,6 +34,8 @@ export type HubOptions = {
   log: EventLog;
   /** `/sessions` lists sessions the hub received an event for this recently. */
   activeWindowMs: number;
+  /** Sessions tracked at most; the least recently seen are forgotten. Default MAX_SESSIONS. */
+  maxSessions?: number | undefined;
   /** A live client whose unsent data exceeds this is disconnected. Default 16 MB. */
   maxClientBufferBytes?: number;
   /** Replay pauses while a client has more than this unsent. Default 1 MB. */
@@ -34,6 +44,12 @@ export type HubOptions = {
   replayStallMs?: number;
   logger: Logger;
   now?: () => number;
+  /** Consulted when the domain rules are unsure (see `BATON_SUMMARIZER`). */
+  tieBreaker?: DomainTieBreaker;
+  /** Shared canvas node positions. Default: in memory only. */
+  canvas?: CanvasStore;
+  /** Shown as the user of sessions without a `source` (the local OS user). */
+  user?: string;
 };
 
 type SubscribeRequest = {
@@ -69,6 +85,9 @@ const CLOSE_TOO_SLOW = 1013;
 const REPLAY_BATCH = 256;
 const REPLAY_POLL_MS = 10;
 
+/** Default cap on sessions a hub tracks (see `HubOptions.maxSessions`). */
+export const MAX_SESSIONS = 5000;
+
 /**
  * The local delivery point: numbers events into an EventLog and fans them out
  * to subscribed WebSocket clients, replaying the log to clients that join or
@@ -77,6 +96,10 @@ const REPLAY_POLL_MS = 10;
 export class Hub implements EventSink {
   readonly #log: EventLog;
   readonly #sessions = new Map<string, SessionState>();
+  readonly #domains: SessionDomains;
+  readonly #files = new SessionFiles();
+  readonly #contracts = new SessionContracts();
+  readonly #canvas: CanvasStore;
   readonly #clients = new Set<Client>();
   readonly #maxClientBufferBytes: number;
   readonly #replayHighWater: number;
@@ -89,6 +112,8 @@ export class Hub implements EventSink {
     this.#replayHighWater = options.replayHighWaterBytes ?? 1024 * 1024;
     this.#replayStallMs = options.replayStallMs ?? 30_000;
     this.#now = options.now ?? Date.now;
+    this.#domains = new SessionDomains(options.tieBreaker);
+    this.#canvas = options.canvas ?? new CanvasStore();
   }
 
   get epoch(): string {
@@ -114,6 +139,7 @@ export class Hub implements EventSink {
    */
   accept(events: readonly BatonEvent[], options: PublishOptions = {}): number {
     let accepted = 0;
+    for (const [dir, repo] of Object.entries(options.repos ?? {})) this.#domains.setRepo(dir, repo);
     for (const event of events) {
       const entry = this.#log.append(event, options.backlog ?? false);
       if (!entry) continue; // already held, e.g. history published again
@@ -176,18 +202,125 @@ export class Hub implements EventSink {
   /** Sessions active within the window, most recent first. */
   sessions(): SessionInfo[] {
     const cutoff = this.#now() - this.options.activeWindowMs;
-    return [...this.#sessions.entries()]
+    const infos = [...this.#sessions.entries()]
       .filter(([, s]) => s.seenMs >= cutoff)
       .sort(([, a], [, b]) => b.lastMs - a.lastMs || b.seenMs - a.seenMs)
-      .map(([sessionId, s]) => ({
-        sessionId,
-        agent: s.agent,
-        projectPath: s.projectPath,
-        projectName: projectName(s.projectPath),
-        lastActivity: s.lastActivity,
-        events: s.events,
-        ...(s.source === undefined ? {} : { source: s.source }),
-      }));
+      .map(([sessionId, s]) => this.#info(sessionId, s));
+    return this.#withContractIssues(infos);
+  }
+
+  /** One session's info, however long ago it was active. */
+  session(sessionId: string): SessionInfo | undefined {
+    const s = this.#sessions.get(sessionId);
+    if (!s) return undefined;
+    const info = this.#info(sessionId, s);
+    const cutoff = this.#now() - this.options.activeWindowMs;
+    const peers = [...this.#sessions.entries()]
+      .filter(([id, p]) => id !== sessionId && p.seenMs >= cutoff)
+      .map(([id, p]) => this.#info(id, p));
+    return this.#withContractIssues([info, ...peers])[0];
+  }
+
+  /** The daemon a session streams from (team server), or undefined for local sessions. */
+  sessionSource(sessionId: string): string | undefined {
+    return this.#sessions.get(sessionId)?.source;
+  }
+
+  /** The events the log still holds for a session, oldest first. */
+  sessionEvents(sessionId: string): BatonEvent[] {
+    if (!this.#sessions.has(sessionId)) return [];
+    return this.#log
+      .read(this.#log.firstSeq - 1, Number.MAX_SAFE_INTEGER)
+      .flatMap((e) => (e.event.sessionId === sessionId ? [e.event] : []));
+  }
+
+  /** Sends a message to every connected viewer. */
+  broadcast(message: ServerMessage): void {
+    const data = JSON.stringify(message);
+    for (const client of this.#clients) if (client.live) this.#sendLive(client, data);
+  }
+
+  #info(sessionId: string, s: SessionState): SessionInfo {
+    return {
+      sessionId,
+      agent: s.agent,
+      projectPath: s.projectPath,
+      projectName: projectName(s.projectPath),
+      lastActivity: s.lastActivity,
+      events: s.events,
+      ...(s.source === undefined ? {} : { source: s.source }),
+      ...this.#repoField(s.projectPath),
+      domain: this.#domains.domain(sessionId, s.projectPath),
+      ...((s.source ?? this.options.user) ? { user: s.source ?? this.options.user } : {}),
+      ...this.#filesField(sessionId, s.projectPath),
+    };
+  }
+
+  /** Adds possible I/O mismatches between sessions of the same repo. */
+  #withContractIssues(infos: SessionInfo[]): SessionInfo[] {
+    const entries = new Map(
+      infos.map((i) => [
+        i.sessionId,
+        {
+          sessionId: i.sessionId,
+          group: i.repo?.repoId ?? i.projectPath,
+          domain: i.domain?.label,
+          root: this.#repoRoot(i.projectPath),
+        },
+      ]),
+    );
+    const issues = this.#contracts.issues(entries);
+    return infos.map((i) => {
+      const found = issues.get(i.sessionId);
+      return found && found.length > 0 ? { ...i, contractIssues: found } : i;
+    });
+  }
+
+  #filesField(sessionId: string, projectPath: string): { files?: TouchedFile[] } {
+    const files = this.#files.files(sessionId, this.#repoRoot(projectPath));
+    return files.length > 0 ? { files } : {};
+  }
+
+  #repoRoot(projectPath: string): string | null {
+    const repo = this.#domains.repo(projectPath);
+    if (!repo || repo.relativeCwd === null) return null;
+    return repoRoot(projectPath, repo.relativeCwd);
+  }
+
+  /** Every saved canvas node position. */
+  canvasPositions(): CanvasPositions {
+    return this.#canvas.all();
+  }
+
+  /**
+   * Saves moved canvas nodes, forgets removed ones, and tells every viewer
+   * about what actually changed.
+   */
+  moveCanvasNodes(moved: CanvasPositions, remove: readonly string[] = []): CanvasPositions {
+    const changed = this.#canvas.set(moved);
+    const removed = this.#canvas.remove(remove.filter((k) => !(k in moved)));
+    if (Object.keys(changed).length > 0 || removed.length > 0) {
+      const message: CanvasMessage = {
+        type: "canvas",
+        positions: changed,
+        ...(removed.length > 0 ? { removed } : {}),
+      };
+      const data = JSON.stringify(message);
+      for (const client of this.#clients) this.#sendLive(client, data);
+    }
+    return changed;
+  }
+
+  #repoField(projectPath: string): Pick<SessionInfo, "repo"> {
+    const repo = this.#domains.repo(projectPath);
+    return repo ? { repo } : {};
+  }
+
+  /** Pins a session's domain label (`null` clears it). False for an unknown session. */
+  setDomainOverride(sessionId: string, label: DomainLabel | null): boolean {
+    if (!this.#sessions.has(sessionId)) return false;
+    this.#domains.setOverride(sessionId, label);
+    return true;
   }
 
   #subscribe(client: Client, request: SubscribeRequest): void {
@@ -201,6 +334,8 @@ export class Hub implements EventSink {
       seq: this.#log.lastSeq,
       session: request.session,
     });
+    // Always, even empty: a reconnecting viewer must drop nodes removed meanwhile.
+    this.#write(client, { type: "canvas", positions: this.#canvas.all(), snapshot: true });
 
     const { lastSeq } = request;
     const resumable =
@@ -262,7 +397,29 @@ export class Hub implements EventSink {
     return current();
   }
 
+  /**
+   * Keeps per-session state bounded on a long-running team server: past
+   * `maxSessions`, the sessions seen longest ago are forgotten (their events
+   * stay in the log until it rolls over).
+   */
+  #evict(): void {
+    const max = this.options.maxSessions ?? MAX_SESSIONS;
+    if (this.#sessions.size <= max) return;
+    const oldest = [...this.#sessions.entries()]
+      .sort(([, a], [, b]) => a.seenMs - b.seenMs)
+      .slice(0, this.#sessions.size - max);
+    for (const [id] of oldest) {
+      this.#sessions.delete(id);
+      this.#domains.forget(id);
+      this.#files.forget(id);
+      this.#contracts.forget(id);
+    }
+  }
+
   #track(event: BatonEvent, source: string | undefined): void {
+    this.#domains.record(event);
+    this.#files.record(event);
+    this.#contracts.record(event);
     const ms = Date.parse(event.ts);
     const seenMs = this.#now();
     const s = this.#sessions.get(event.sessionId);
@@ -276,6 +433,7 @@ export class Hub implements EventSink {
         events: 1,
         ...(source === undefined ? {} : { source }),
       });
+      this.#evict();
       return;
     }
     s.events++;

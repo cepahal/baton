@@ -15,6 +15,8 @@ export type ReplayOptions = {
   speed: number;
   /** Simulated user: replaces the home-directory username in paths, and labels the run. */
   as: string;
+  /** Plays the session as if it ran in this folder: the recorded working directory is replaced everywhere. */
+  cwd?: string;
   /** Longest pause, in ms after scaling; longer recorded gaps are cut to it. */
   maxGapMs?: number | undefined;
   /** Seeds the new UUIDs, so a run can be reproduced. Default random. */
@@ -56,7 +58,7 @@ const HOME_USER = /(Users[\\/]+|Users-|\/home\/+)([^\\/\s"'-]+)/g;
  */
 export function planReplay(
   fixtureText: string,
-  options: Pick<ReplayOptions, "projectsDir" | "codexDir" | "speed" | "as" | "maxGapMs"> & {
+  options: Pick<ReplayOptions, "projectsDir" | "codexDir" | "speed" | "as" | "maxGapMs" | "cwd"> & {
     seed: string;
     startMs: number;
   },
@@ -79,8 +81,14 @@ export function planReplay(
     return mapped;
   };
   const user = pathSafe(options.as);
-  const rewrite = (s: string) =>
+  const rehome = (s: string) =>
     s.replace(UUID, mapUuid).replace(HOME_USER, (_m, prefix: string) => `${prefix}${user}`);
+  const fromCwd = options.cwd === undefined ? undefined : recordedCwd(fixtureText, rehome);
+  const toCwd = options.cwd;
+  const rewrite =
+    fromCwd === undefined || toCwd === undefined
+      ? rehome
+      : (s: string) => rehome(s).split(fromCwd).join(toCwd);
 
   const maxGap = options.maxGapMs ?? Number.POSITIVE_INFINITY;
   let firstTs: number | undefined;
@@ -146,6 +154,29 @@ function rolloutPath(codexDir: string, threadId: string, startMs: number): strin
   return join(codexDir, y, m, d, `rollout-${time}-${threadId}.jsonl`);
 }
 
+/** The first working directory a transcript records (Claude `cwd`, Codex `payload.cwd`), rewritten. */
+export function recordedCwd(
+  fixtureText: string,
+  rewrite: (s: string) => string,
+): string | undefined {
+  for (const raw of fixtureText.split(/\r?\n/)) {
+    if (raw.trim() === "") continue;
+    let record: unknown;
+    try {
+      record = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (!isObject(record)) continue;
+    if (typeof record.cwd === "string" && record.cwd !== "") return rewrite(record.cwd);
+    const payload = record.payload;
+    if (isObject(payload) && typeof payload.cwd === "string" && payload.cwd !== "") {
+      return rewrite(payload.cwd);
+    }
+  }
+  return undefined;
+}
+
 /**
  * `baton replay`: writes a fixture into a fresh session log at its recorded
  * pace, so a watching daemon sees what looks like a live Claude Code or Codex
@@ -163,6 +194,7 @@ export async function runReplay(options: ReplayOptions): Promise<ReplayPlan> {
     speed: options.speed,
     as: options.as,
     maxGapMs: options.maxGapMs,
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     seed: options.seed ?? randomUUID(),
     startMs,
   });

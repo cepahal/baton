@@ -46,6 +46,7 @@ function serve(port = 0): Promise<TeamServer> {
     port,
     token: TOKEN,
     logLevel: "silent",
+    summarizer: "off",
     webDir: join(import.meta.dirname, "no-viewer"),
   });
   return startTeamServer(config, silent);
@@ -275,6 +276,9 @@ describe("team server", () => {
       recent: 0,
       poll: false,
       logLevel: "silent" as const,
+      summarizer: "off" as const,
+      summarizerModel: "m",
+      ollamaUrl: "http://127.0.0.1:11434",
       webDir: dirs.root,
     };
     const remote = {

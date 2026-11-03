@@ -39,7 +39,9 @@ rules and an `/ingest` route.
   full, `publish` waits for acks, which pauses the watcher. Nothing is dropped;
   the transcript itself is the overflow.
 - One batch in flight at a time (up to 500 events or 1 MB), sent as
-  `{ type: "publish", batch, backlog?, events }`. The server answers
+  `{ type: "publish", batch, backlog?, repos?, events }`, where `repos` maps
+  each batch's `projectPath`s to their git identity (see
+  [daemon.md](daemon.md#repo-identity-and-domain)). The server answers
   `{ type: "ack", batch, accepted }`, and the sink drops the batch from the
   queue. Without an ack within 30 s, or a pong within 10 s of a ping, it
   drops the connection and resends from the head of the queue after a
@@ -60,7 +62,9 @@ rules and an `/ingest` route.
   `accepted` counts the new ones. Messages up to 16 MB; a malformed message
   gets `{ type: "error" }` and close code 1008. The server pings every 15 s and
   drops daemons that don't answer.
-- Sessions list `source`, and the viewer groups the sidebar by it.
+- Sessions list `source`, and the viewer groups the sidebar by it. They also
+  carry `repo` and `domain`; `PUT /sessions/:id/domain` (token required) sets
+  a manual label on the team server.
 - `/events`, `/ws` and `/sessions` work as in local mode.
 
 ### Access

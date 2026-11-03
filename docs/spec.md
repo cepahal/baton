@@ -499,6 +499,34 @@ The `agent` field costs every handoff event about 22 bytes, which is why the
 Claude numbers dropped 0.1–0.4 points from v1.
 
 
+## Session metadata: repo and domain
+
+Not part of `BatonEvent`; sessions carry them in `SessionInfo`
+(`packages/core/src/protocol.ts`), described in
+[daemon.md](daemon.md#repo-identity-and-domain).
+
+- `RepoInfo { repoId, branch, relativeCwd }`: `repoId` is
+  `normalizeRemoteUrl(remote)` (lower-cased `host/path` with no scheme, user,
+  port or `.git`; local paths become `file:<path>` with forward slashes), else
+  the root commit hash, else null.
+- `classifyDomain(events, { repoRelativeCwd?, repoRoot? })` in core is pure.
+  It looks at the last 50 events and scores each label: an edited file is worth
+  3 (directory names beat extensions), the repo-relative cwd 2, each prompt
+  keyword 1 (at most 3 per prompt and label). `confidence` is the winner's
+  share of the score, scaled down while total evidence is under 6. Equal
+  scores are broken by file points, then cwd points; a real tie is `unknown`.
+  `reasons` are short strings like `edited apps/web/App.tsx (web/)`.
+- `fileTouches(event)` in core lists the files a tool call writes, with the
+  lines when the event says (see
+  [daemon.md](daemon.md#touched-files)); sessions carry them as
+  `SessionInfo.files`. Viewers never show `unknown` as a domain: it is left
+  blank.
+- `writtenTexts(event)`, `extractContracts(file, text)` and
+  `contractIssues(sessions)` in core find possible I/O mismatches between
+  sessions of a repo (routes served vs called, data shapes); sessions carry
+  them as `SessionInfo.contractIssues: { kind: "route" | "shape", message,
+  otherSessionId }[]` (see [daemon.md](daemon.md#conflicts)).
+
 ## Decided
 
 - Subagent records: shown in the viewer as a closed dropdown under their parent

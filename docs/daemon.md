@@ -26,8 +26,12 @@ TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local)
    └─ StateStore (offsets on disk)
 ```
 
-- `src/sink.ts`: `EventSink { publish(events, { backlog? }) }`. The watcher
-  only knows this interface.
+- `src/sink.ts`: `EventSink { publish(events, { backlog?, source?, repos? }) }`.
+  The watcher only knows this interface.
+- `src/repo-sink.ts`: `RepoTaggingSink` wraps the hub (or `RemoteSink`) and
+  adds `repos`, the git identity of each event's `projectPath`, so the watcher
+  never runs git. `src/repo-info.ts` looks it up (`RepoResolver`, cached per
+  directory for 60 s; see [Repo identity](#repo-identity-and-domain)).
 - `src/sources.ts`: one `LogSource { agent, kind, dir, detect }` per entry in
   core's `AGENT_REGISTRY`; which files belong to which session (a Codex thread's
   segment files share one).
@@ -109,12 +113,13 @@ Every query parameter is optional: `session` defaults to `all`, or can be a
 
 **Server → client:**
 
-| `type`  | Fields                                         | When                                                          |
-| ------- | ---------------------------------------------- | ------------------------------------------------------------- |
-| `hello` | `protocol`, `epoch`, `seq` (latest), `session` | First, and again after each `subscribe`                       |
-| `event` | `seq`, `event: BatonEvent`, `backlog?: true`   | Replay, then live                                             |
-| `gap`   | `fromSeq`, `toSeq`                             | Before a replay, if those seqs already left the ring buffer   |
-| `error` | `message`                                      | The client sent something invalid. The connection stays open. |
+| `type`   | Fields                                                       | When                                                                                                                                                                                         |
+| -------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hello`  | `protocol`, `epoch`, `seq` (latest), `session`               | First, and again after each `subscribe`                                                                                                                                                      |
+| `event`  | `seq`, `event: BatonEvent`, `backlog?: true`                 | Replay, then live                                                                                                                                                                            |
+| `gap`    | `fromSeq`, `toSeq`                                           | Before a replay, if those seqs already left the ring buffer                                                                                                                                  |
+| `error`  | `message`                                                    | The client sent something invalid. The connection stays open.                                                                                                                                |
+| `canvas` | `positions` (`{ [key]: { x, y } }`), `removed?`, `snapshot?` | After `hello`, always, with `snapshot: true` and every saved position (the viewer replaces what it held, so nodes removed while it was away disappear); then each change (only what changed) |
 
 **Client → server:** `{ "type": "subscribe", "session": "all" | "<id>",
 "lastSeq"?: n, "epoch"?: "<id>" }` switches subscription on the same socket
@@ -154,6 +159,28 @@ code 1013. An invalid query closes it with 1008.
   older server leaves it out. These are sessions the hub received an event for
   within `--active-minutes`, newest `lastActivity` (transcript `ts`) first.
   `events` counts what the hub received since it started, backlog included.
+  `repo` and `domain` are described under
+  [Repo identity and domain](#repo-identity-and-domain). `user` is who runs the
+  session: the forwarding daemon's name on a team server (`source`), else the
+  daemon's OS user. `files` (left out when empty) lists the files the session
+  wrote, repo-relative when the repo root is known, as
+  `{ path, ranges: [[first, last], …] }`; see [Touched files](#touched-files).
+  `contractIssues` (left out when empty) lists possible I/O mismatches with
+  other sessions in the same repo; see [Conflicts](#conflicts).
+- `PUT /sessions/:sessionId/domain` with `{ "label": "<label>" | null }` sets
+  (or clears, with `null`) a manual domain label; answers the session's new
+  `domain`, 400 for a bad body, 404 for a session the hub doesn't know.
+  Overrides live in memory and win over everything else.
+- `GET /canvas` → `{ positions }`: where viewers put each canvas node.
+- `PUT /canvas/positions` with `{ positions: { [key]: { x, y } }, removed?: [key] }`
+  saves moved nodes, forgets removed ones, and broadcasts what changed as a
+  `canvas` message to every viewer (204; 400 for a bad body). The viewer keys
+  cards `session:<sessionId>`, at their absolute top-left corner; a session is
+  on the canvas exactly when it has a position, and its repo's box is drawn
+  around its cards. (`repo:<group>` keys are accepted too.) Positions are
+  shared by everyone on the hub and saved, debounced, to `canvas.json` next to
+  the state file (`team-canvas.json` for `baton serve`), so they survive
+  restarts. At most 5000 are kept; the least recently moved go first.
 - `GET /health` → `{ ok, epoch, seq }`.
 - `GET /events?after=<seq>&limit=<n>` → the hub's log in order (see
   [team.md](team.md#get-events)).
@@ -163,7 +190,7 @@ code 1013. An invalid query closes it with 1008.
   the daemon logs a warning and `/` returns a plain-text hint to run
   `pnpm build`. The routes above take precedence over viewer files.
 - For viewer development, `pnpm --filter @baton/web dev` serves the app with
-  Vite and proxies `/sessions` and `/ws` to the daemon on `BATON_PORT`
+  Vite and proxies `/sessions`, `/canvas` and `/ws` to the daemon on `BATON_PORT`
   (default 7777).
 
 ## Local-only
@@ -194,3 +221,90 @@ polished version. The seam for fixing it is already there:
 
 - When the buffer is full, should whole old sessions be dropped instead of
   the oldest events across all sessions?
+
+## Repo identity and domain
+
+Each session in `/sessions` carries:
+
+- `repo: { repoId, branch, relativeCwd }` for its `projectPath` (cwd), looked
+  up by the daemon with git: `repoId` is the remote URL normalized by core's
+  `normalizeRemoteUrl` (`origin`, else the first remote), so ssh, https,
+  `.git`, credentials, ports and case all map to one string, e.g.
+  `github.com/org/repo`. With no usable remote it is the repo's root commit
+  hash. `branch` is null on a detached HEAD; `relativeCwd` is the cwd relative
+  to the repo root (`""` at the root). Outside a git repo all three are null.
+  Missing when the hub never got repo info (an older forwarding daemon).
+- `domain: { label, confidence, reasons, source }`, `label` one of
+  `frontend`, `backend`, `ml`, `data`, `infra`, `unknown`. The hub keeps each
+  session's last 50 events and runs core's `classifyDomain` over them: files
+  edited (Claude `Edit`/`Write`/`MultiEdit`/`NotebookEdit`, Codex file
+  changes) weigh most, then the repo-relative cwd, then prompt keywords. The
+  rules are the `DOMAIN_RULES` table in `packages/core/src/domain/rules.ts`.
+  `source` says where the label came from:
+  - `override`: set with `PUT /sessions/:id/domain`; always wins.
+  - `llm`: the rules were under 0.5 confident and the optional LLM tie-break
+    answered (reported with confidence 0.5).
+  - `rules`: everything else.
+
+### LLM tie-break
+
+Off by default. `BATON_SUMMARIZER=anthropic` (on `baton start` or `baton
+serve`) turns it on; it calls the Claude API with the SDK's usual credentials
+(`ANTHROPIC_API_KEY` etc.) and `BATON_SUMMARIZER_MODEL` (default
+`claude-opus-5-5`, low effort). It runs only for sessions whose rule-based
+confidence is below 0.5, at most once per session every 5 minutes, in the
+background; until it answers, the rules' label is shown. Failures are logged
+and ignored. It sends the session's recent prompts (trimmed) and edited
+paths, nothing else.
+
+## Touched files
+
+The hub records, per session, the files its tool calls wrote (`fileTouches`
+in `packages/core/src/files/touches.ts`): Claude `Edit`/`MultiEdit`/`Write`/
+`NotebookEdit` and Codex patches. Line ranges are only what the events carry: a
+`Write`'s whole content, a Codex added file, or a Codex diff's hunk headers
+(new-side lines). Claude `Edit` results don't say where the edit landed, so
+those files have no ranges. Ranges are merged per file; at most 500 files per
+session are kept (oldest dropped) and more than 64 ranges in one file collapse
+into one span.
+
+The viewer's canvas links every pair of sessions in the same repo with an
+orange line. When both wrote a file, the line turns red, glows, and is split in
+the middle (a likely merge conflict); it glows harder when written line ranges
+overlap. The label counts the shared files; hovering lists them. When the two domains form a flow (frontend → backend,
+backend → data, backend → ml, data → ml) the line carries an arrow pointing
+downstream.
+
+## Conflicts
+
+Two kinds, both per repo (`repoId`, else the session folder):
+
+- **Same files.** From [Touched files](#touched-files), computed in the viewer:
+  the glowing red split line above.
+- **I/O contracts.** Core's `extractContracts` reads what each write says about
+  the code's interface: HTTP routes it serves (Express/Fastify-style
+  `app.get("/x")`, FastAPI/Flask decorators, Next.js `app/**/route.ts` and
+  `pages/api/**`), endpoints it calls (`fetch`, `axios.*`, `api.*`,
+  `requests.*`), and data shapes it declares (TS interfaces and object types,
+  `z.object`, pydantic/dataclass classes, Go structs with their `json` tags).
+  Paths are normalized (`/items/:id`, `{id}`, `[id]`, `${id}`, `42` →
+  `/items/:param`). `contractIssues` then compares sessions: a call to a route
+  no session serves while another session serves that namespace, a call with
+  a method the route lacks, and shapes with the same (or same-base, e.g.
+  `CartItem` / `CartItemResponse`) name that differ in field count, field names
+  (camelCase vs snake_case are named as such) or kinds. Shapes in the same file,
+  UI props/state, and shapes sharing under a third of their fields are skipped.
+  At most 5 issues per session, each one line (≤240 chars), shown on the card
+  as a caution sign.
+
+These are heuristics over regexes, tuned to stay quiet rather than complete:
+expect misses (dynamic routes, generated clients, GraphQL) more than false
+alarms. The daemon keeps contracts for at most 300 files per session; a
+whole-file write replaces a file's contracts, an edit adds to them.
+
+## Bounds
+
+A long-running hub forgets the least recently seen sessions beyond
+`maxSessions` (default 5000) along with their domain, files and contracts
+state; their events stay in the log until it rolls over. Domain
+classification is cached per session until its next event.

@@ -164,6 +164,12 @@ describe("Hub", () => {
         projectName: "proj",
         lastActivity: "2026-11-01T12:00:00.000Z",
         events: 1,
+        domain: {
+          label: "unknown",
+          confidence: 0,
+          reasons: ["no domain signals"],
+          source: "rules",
+        },
       },
       {
         sessionId: SESSION_B,
@@ -172,6 +178,12 @@ describe("Hub", () => {
         projectName: "proj",
         lastActivity: "2026-11-01T11:00:00.000Z",
         events: 2,
+        domain: {
+          label: "unknown",
+          confidence: 0,
+          reasons: ["no domain signals"],
+          source: "rules",
+        },
       },
     ]);
   });

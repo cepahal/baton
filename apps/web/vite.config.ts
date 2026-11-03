@@ -15,6 +15,9 @@ export default defineConfig({
     // `pnpm dev`: the daemon serves the API and socket; Vite serves the app.
     proxy: {
       "/sessions": `http://127.0.0.1:${port}`,
+      "/canvas": `http://127.0.0.1:${port}`,
+      "/handoffs": `http://127.0.0.1:${port}`,
+      "/inbox": `http://127.0.0.1:${port}`,
       "/ws": { target: `ws://127.0.0.1:${port}`, ws: true },
     },
   },

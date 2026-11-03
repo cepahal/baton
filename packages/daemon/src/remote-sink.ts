@@ -1,4 +1,11 @@
-import { type BatonEvent, IngestServerMessage, type PublishMessage } from "@baton/core";
+import {
+  type BatonEvent,
+  type HandoffOfferMessage,
+  type HandoffStatusMessage,
+  IngestServerMessage,
+  type PublishMessage,
+  type RepoInfo,
+} from "@baton/core";
 import type { Logger } from "pino";
 import WebSocket from "ws";
 import type { DiskQueue } from "./disk-queue.js";
@@ -24,7 +31,12 @@ export type RemoteSinkOptions = {
   pingMs?: number;
   /** A batch not acked within this is assumed lost and the connection is dropped. Default 30 s. */
   ackTimeoutMs?: number;
+  /** Handoff messages from the server, for this machine's inbox. */
+  onHandoff?: (message: HandoffOfferMessage) => void;
 };
+
+/** Answers about handoffs, sent up the same connection. */
+export type HandoffControl = HandoffStatusMessage;
 
 type InFlight = { batch: number; count: number; timer: NodeJS.Timeout };
 
@@ -54,6 +66,8 @@ export class RemoteSink implements EventSink {
   #open = false;
   #inFlight: InFlight | undefined;
   #nextBatch = 0;
+  /** Latest git identity per project directory, sent with batches that mention it. */
+  readonly #repos = new Map<string, RepoInfo>();
   #retryMs: number;
   #retryTimer: NodeJS.Timeout | undefined;
   #pingTimer: NodeJS.Timeout | undefined;
@@ -61,6 +75,8 @@ export class RemoteSink implements EventSink {
   #closed = false;
   #connectedOnce = false;
   #drainWaiters: (() => void)[] = [];
+  /** Handoff answers waiting for a connection; the server resends offers on connect anyway. */
+  #control: HandoffControl[] = [];
 
   constructor(readonly options: RemoteSinkOptions) {
     this.#url = ingestUrl(options.server, options.name);
@@ -84,8 +100,21 @@ export class RemoteSink implements EventSink {
 
   async publish(events: readonly BatonEvent[], options: PublishOptions = {}): Promise<void> {
     const backlog = options.backlog === true;
+    for (const [dir, info] of Object.entries(options.repos ?? {})) this.#repos.set(dir, info);
     await this.options.queue.push(events.map((event) => ({ backlog, event })));
     this.#pump();
+  }
+
+  /** Sends a handoff answer now, or once connected. */
+  sendControl(message: HandoffControl): void {
+    this.#control.push(message);
+    this.#flushControl();
+  }
+
+  #flushControl(): void {
+    const socket = this.#socket;
+    if (!this.#open || !socket) return;
+    for (const message of this.#control.splice(0)) socket.send(JSON.stringify(message));
   }
 
   /** Starts connecting; returns immediately (events queue until the server is reachable). */
@@ -138,6 +167,7 @@ export class RemoteSink implements EventSink {
       );
       this.#connectedOnce = true;
       this.#startPing(socket);
+      this.#flushControl();
       this.#pump();
     });
     socket.on("message", (data, isBinary) => {
@@ -194,6 +224,10 @@ export class RemoteSink implements EventSink {
       this.#log.error({ message: msg.data.message }, "team server reported an error");
       return;
     }
+    if (msg.data.type === "handoff_offer") {
+      this.options.onHandoff?.(msg.data);
+      return;
+    }
     const inFlight = this.#inFlight;
     if (!inFlight || msg.data.batch !== inFlight.batch) return; // stale ack from a resend
     clearTimeout(inFlight.timer);
@@ -223,11 +257,18 @@ export class RemoteSink implements EventSink {
     const first = items[0];
     if (!first) return;
     const batch = this.#nextBatch++;
+    const events = items.map((i) => i.event);
+    const repos: Record<string, RepoInfo> = {};
+    for (const e of events) {
+      const info = this.#repos.get(e.projectPath);
+      if (info) repos[e.projectPath] = info;
+    }
     const msg: PublishMessage = {
       type: "publish",
       batch,
       ...(first.backlog ? { backlog: true } : {}),
-      events: items.map((i) => i.event),
+      events,
+      ...(Object.keys(repos).length > 0 ? { repos } : {}),
     };
     const timer = setTimeout(() => {
       this.#log.warn({ batch }, "no ack from team server; reconnecting");

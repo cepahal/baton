@@ -1,4 +1,10 @@
-import { type EventMessage, type GapMessage, ServerMessage } from "@baton/core";
+import {
+  type CanvasMessage,
+  type EventMessage,
+  type GapMessage,
+  type HandoffMessage,
+  ServerMessage,
+} from "@baton/core";
 import { type BackoffOptions, backoffDelay, DEFAULT_BACKOFF } from "./backoff.js";
 
 export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "stopped";
@@ -33,6 +39,10 @@ export type ConnectionOptions = {
   url: string;
   onEvent(message: EventMessage): void;
   onGap?(message: GapMessage): void;
+  /** Shared canvas positions: the full set after connecting, then each change. */
+  onCanvas?(message: CanvasMessage): void;
+  /** A handoff was sent or answered. */
+  onHandoff?(message: HandoffMessage): void;
   createSocket?: SocketFactory;
   backoff?: BackoffOptions;
   /**
@@ -208,6 +218,12 @@ export class ConnectionManager {
         return;
       case "error":
         this.#update({ error: message.message });
+        return;
+      case "canvas":
+        this.#options.onCanvas?.(message);
+        return;
+      case "handoff":
+        this.#options.onHandoff?.(message);
         return;
     }
   }

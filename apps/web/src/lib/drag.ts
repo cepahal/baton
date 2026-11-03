@@ -2,26 +2,55 @@ import { z } from "zod";
 
 /** The drag payload type for a session dragged from the sidebar. */
 export const SESSION_DRAG_TYPE = "application/x-baton-session";
-/** The drag payload type for a card moved on the board. */
-export const CARD_DRAG_TYPE = "application/x-baton-card";
 
-/** Which card is moving and where in it the pointer grabbed it. */
-export const CardDrag = z.object({ id: z.string().min(1), dx: z.number(), dy: z.number() });
-export type CardDrag = z.infer<typeof CardDrag>;
+/**
+ * The drag payload type for a handoff: a card's grip (full), a feed event
+ * (snippet), or the bubble at the bottom of a feed (chat: the whole conversation).
+ */
+export const HANDOFF_DRAG_TYPE = "application/x-baton-handoff";
 
-export function parseCardDrag(raw: string): CardDrag | undefined {
+export const HandoffDrag = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("full"), sessionId: z.string().min(1) }),
+  z.object({ kind: z.literal("chat"), sessionId: z.string().min(1) }),
+  z.object({
+    kind: z.literal("snippet"),
+    sessionId: z.string().min(1),
+    eventId: z.string().min(1),
+  }),
+]);
+export type HandoffDrag = z.infer<typeof HandoffDrag>;
+
+type Transfer = Pick<DataTransfer, "setData" | "getData" | "types"> & {
+  effectAllowed?: DataTransfer["effectAllowed"];
+};
+
+const DRAG_TEXT = { full: "Baton handoff", chat: "Baton chat", snippet: "Baton snippet" } as const;
+
+/** What a handoff of each kind is called in the viewer. */
+export const HANDOFF_KIND_NAMES = {
+  full: "handoff",
+  chat: "whole chat",
+  snippet: "snippet",
+} as const;
+
+export function setHandoffDrag(transfer: Transfer, drag: HandoffDrag): void {
+  transfer.setData(HANDOFF_DRAG_TYPE, JSON.stringify(drag));
+  transfer.setData("text/plain", DRAG_TEXT[drag.kind]);
+  transfer.effectAllowed = "copy";
+}
+
+export function isHandoffDrag(transfer: Pick<DataTransfer, "types">): boolean {
+  return Array.from(transfer.types).includes(HANDOFF_DRAG_TYPE);
+}
+
+/** The dropped handoff, or undefined for anything else (it came from outside, so check it). */
+export function readHandoffDrag(transfer: Pick<DataTransfer, "getData">): HandoffDrag | undefined {
+  const text = transfer.getData(HANDOFF_DRAG_TYPE);
+  if (!text) return undefined;
   try {
-    const r = CardDrag.safeParse(JSON.parse(raw));
-    return r.success ? r.data : undefined;
+    const parsed = HandoffDrag.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : undefined;
   } catch {
     return undefined;
   }
-}
-
-/** Whether a point lies outside a rect: a card dropped there leaves the board. */
-export function isOutside(
-  p: { x: number; y: number },
-  r: { left: number; top: number; right: number; bottom: number },
-): boolean {
-  return p.x < r.left || p.x > r.right || p.y < r.top || p.y > r.bottom;
 }

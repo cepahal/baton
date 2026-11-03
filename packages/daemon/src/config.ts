@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DaemonName } from "@baton/core";
 import { z } from "zod";
+import { DEFAULT_OLLAMA_URL } from "./ollama.js";
 
 export const DEFAULT_PORT = 7777;
 /** Memory for replayable events; roughly a few hundred long sessions. */
@@ -22,8 +23,34 @@ const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"
 
 const int = (min: number) => z.coerce.number().int().min(min);
 
+/** Default model when `BATON_SUMMARIZER=anthropic`. */
+export const DEFAULT_SUMMARIZER_MODEL = "claude-opus-5-5";
+
+export const SUMMARIZERS = ["off", "ollama", "anthropic"] as const;
+export type SummarizerKind = (typeof SUMMARIZERS)[number];
+
+/**
+ * `BATON_SUMMARIZER`: which model, if any, drafts handoff summaries and
+ * settles a session's domain when the rules are unsure. `ollama` (default)
+ * talks to a local Ollama only, picking the fastest installed model unless
+ * `BATON_SUMMARIZER_MODEL` names one; `off` sends nothing anywhere.
+ */
+const summarizerFields = {
+  summarizer: z.enum(SUMMARIZERS),
+  summarizerModel: z.string().min(1).optional(),
+  ollamaUrl: z.string().url(),
+};
+
+/** The summarizer settings both commands share. */
+export type SummarizerConfig = {
+  summarizer: SummarizerKind;
+  summarizerModel?: string | undefined;
+  ollamaUrl: string;
+};
+
 /** Daemon settings after defaults are applied. */
 export const DaemonConfig = z.object({
+  ...summarizerFields,
   port: int(0).max(65535),
   projectsDir: z.string().min(1),
   /** Codex session logs (`~/.codex/sessions`). */
@@ -60,6 +87,7 @@ export type RemoteConfig = NonNullable<DaemonConfig["remote"]>;
 
 /** `baton serve` settings after defaults are applied. */
 export const ServeConfig = z.object({
+  ...summarizerFields,
   host: z.string().min(1),
   port: int(0).max(65535),
   token: z
@@ -124,6 +152,9 @@ export function resolveConfig(
     poll: input.poll ?? false,
     logLevel: input.logLevel ?? "info",
     webDir: input.webDir ?? defaultWebDir(),
+    summarizer: input.summarizer ?? "ollama",
+    summarizerModel: input.summarizerModel,
+    ollamaUrl: input.ollamaUrl ?? DEFAULT_OLLAMA_URL,
     remote: input.remote && {
       server: input.remote.server,
       token: input.remote.token,
@@ -159,6 +190,9 @@ export function resolveServeConfig(
     activeMinutes: input.activeMinutes ?? 24 * 60,
     logLevel: input.logLevel ?? "info",
     webDir: input.webDir ?? defaultWebDir(),
+    summarizer: input.summarizer ?? "ollama",
+    summarizerModel: input.summarizerModel,
+    ollamaUrl: input.ollamaUrl ?? DEFAULT_OLLAMA_URL,
   });
   return { ...config, webDir: resolve(config.webDir) };
 }

@@ -1,6 +1,7 @@
 import type { BatonEvent } from "@baton/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { setHandoffDrag } from "../../lib/drag.js";
 import { buildFeedRows, type FeedRow } from "../../lib/feed-rows.js";
 import { EventCard } from "../events/EventCard.js";
 import { SidechainGroup } from "../events/SidechainGroup.js";
@@ -106,7 +107,22 @@ export function Feed({ events }: Props) {
 
 function Row({ row }: { row: FeedRow }) {
   return row.type === "event" ? (
-    <EventCard event={row.event} />
+    // Drag any event onto a session card to hand it over as a snippet.
+    // biome-ignore lint/a11y/noStaticElementInteractions: drag is a pointer extra; nothing here needs a key.
+    <div
+      className="feed-drag"
+      draggable
+      title="Drag onto a session card to hand this over"
+      onDragStart={(e) =>
+        setHandoffDrag(e.dataTransfer, {
+          kind: "snippet",
+          sessionId: row.event.sessionId,
+          eventId: row.event.id,
+        })
+      }
+    >
+      <EventCard event={row.event} />
+    </div>
   ) : (
     <SidechainGroup agentId={row.agentId} events={row.events} />
   );

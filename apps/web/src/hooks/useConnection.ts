@@ -1,4 +1,5 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import type { CanvasMessage, HandoffMessage } from "@baton/core";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ConnectionManager, type ConnectionState } from "../lib/connection.js";
 import type { EventStore } from "../lib/event-store.js";
 import { defaultSocketUrl } from "../lib/sessions.js";
@@ -14,10 +15,23 @@ export type Connection = {
  */
 export function useConnection(
   store: EventStore,
+  onCanvas?: (message: CanvasMessage) => void,
+  onHandoff?: (message: HandoffMessage) => void,
   url = defaultSocketUrl(window.location),
 ): Connection {
+  // The socket outlives renders; it reaches the latest canvas handler through a ref.
+  const canvasRef = useRef(onCanvas);
+  canvasRef.current = onCanvas;
+  const handoffRef = useRef(onHandoff);
+  handoffRef.current = onHandoff;
   const [manager] = useState(
-    () => new ConnectionManager({ url, onEvent: (message) => store.add(message.event) }),
+    () =>
+      new ConnectionManager({
+        url,
+        onEvent: (message) => store.add(message.event),
+        onCanvas: (message) => canvasRef.current?.(message),
+        onHandoff: (message) => handoffRef.current?.(message),
+      }),
   );
   useEffect(() => {
     manager.start();

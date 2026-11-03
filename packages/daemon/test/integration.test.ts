@@ -178,9 +178,15 @@ describe("baton daemon", () => {
     await dirs.append(dirs.transcript(SESSION_A), `${record(SESSION_A, "user", "hi")}\n`);
     await client.untilEvents(2);
 
-    const res = await fetch(`${daemon.url}/sessions`);
-    const body = SessionsResponse.parse(await res.json());
-    expect(body.sessions).toEqual([
+    // Git identity is looked up in the background; wait for it to land.
+    const list = async () =>
+      SessionsResponse.parse(await (await fetch(`${daemon?.url}/sessions`)).json()).sessions;
+    let sessions = await list();
+    for (let i = 0; i < 100 && sessions[0]?.repo === undefined; i++) {
+      await sleep(50);
+      sessions = await list();
+    }
+    expect(sessions).toEqual([
       {
         sessionId: SESSION_A,
         agent: "claude-code",
@@ -188,6 +194,16 @@ describe("baton daemon", () => {
         projectName: "proj",
         lastActivity: client.events.at(-1)?.event.ts,
         events: 2,
+        // /home/dev/proj does not exist here, so git has nothing to say.
+        repo: { repoId: null, branch: null, relativeCwd: null },
+        domain: {
+          label: "unknown",
+          confidence: 0,
+          reasons: ["no domain signals"],
+          source: "rules",
+        },
+        // The OS user running the daemon.
+        user: expect.any(String),
       },
     ]);
   });

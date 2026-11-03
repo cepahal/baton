@@ -18,6 +18,37 @@ export {
   compactForLLM,
 } from "./compact.js";
 export {
+  contractIssues,
+  describeDiff,
+  MAX_ISSUES_PER_SESSION,
+  pathsMatch,
+  type SessionContractsInput,
+} from "./contracts/compare.js";
+export {
+  extractContracts,
+  normalizeEndpointPath,
+  type WrittenText,
+  writtenTexts,
+} from "./contracts/extract.js";
+export {
+  ContractIssue,
+  type Endpoint,
+  type FieldKind,
+  type FileContracts,
+  HTTP_METHODS,
+  HttpMethod,
+  type Shape,
+  type ShapeField,
+} from "./contracts/schema.js";
+export {
+  type ClassifyOptions,
+  classifyDomain,
+  DOMAIN_WINDOW,
+  touchedPaths,
+} from "./domain/classify.js";
+export { DOMAIN_RULES, type DomainRule } from "./domain/rules.js";
+export { DOMAIN_LABELS, DomainClassification, DomainLabel } from "./domain/schema.js";
+export {
   AGENT_IDS,
   AgentId,
   BATON_EVENT_KINDS,
@@ -26,15 +57,66 @@ export {
   BatonEventMeta,
   JsonValue,
 } from "./event.js";
+export { TouchedFile } from "./files/schema.js";
+export {
+  type FileTouch,
+  fileTouches,
+  hunkRanges,
+  type LineRange,
+  mergeRanges,
+} from "./files/touches.js";
+export { renderChat } from "./handoff/chat.js";
+export {
+  buildHandoffDraft,
+  type DraftResult,
+  HANDOFF_GOAL_MAX,
+  HANDOFF_SNIPPET_MAX_BYTES,
+  HANDOFF_STATE_MAX,
+  type HandoffHeader,
+  handoffFilePath,
+  handoffPrompt,
+  heuristicSummary,
+  renderHandoff,
+  renderSnippet,
+  SUMMARIZER_INPUT_MAX_BYTES,
+  SummarizerReply,
+  summarizerInput,
+  withFiles,
+} from "./handoff/packet.js";
+export {
+  HANDOFF_ID_PATTERN,
+  HANDOFF_MARKDOWN_MAX,
+  Handoff,
+  HandoffCreate,
+  HandoffDraft,
+  HandoffDraftRequest,
+  HandoffId,
+  HandoffKind,
+  HandoffParty,
+  HandoffResponse,
+  HandoffStatus,
+  HandoffSummary,
+  HandoffsResponse,
+} from "./handoff/schema.js";
 export {
   AckMessage,
+  CanvasKey,
+  CanvasMessage,
+  CanvasMoveBody,
+  CanvasPoint,
+  CanvasPositions,
+  CanvasResponse,
   ClientMessage,
   DaemonName,
+  DomainOverrideBody,
   ErrorMessage,
   EventMessage,
   EventsQuery,
   EventsResponse,
   GapMessage,
+  HandoffMessage,
+  HandoffOfferMessage,
+  HandoffStatusMessage,
   HelloMessage,
   IngestClientMessage,
   IngestQuery,
@@ -42,7 +124,9 @@ export {
   PROTOCOL_VERSION,
   PublishMessage,
   projectName,
+  RepoInfo,
   ServerMessage,
+  SessionDomain,
   SessionInfo,
   SessionsResponse,
   SubscribeMessage,
@@ -54,6 +138,7 @@ export {
   type ReductionOptions,
   type ReductionReport,
 } from "./reduction.js";
+export { normalizeRemoteUrl, repoRelativePath } from "./repo/remote-url.js";
 export {
   createTranscriptParser,
   type ParseResult,

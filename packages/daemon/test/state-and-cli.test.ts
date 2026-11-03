@@ -135,6 +135,10 @@ describe("parseCli", () => {
         poll: true,
         logLevel: "debug",
         webDir: dirs.root,
+        remote: undefined,
+        summarizer: "ollama",
+        summarizerModel: undefined,
+        ollamaUrl: "http://127.0.0.1:11434",
       },
     });
   });

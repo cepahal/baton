@@ -46,12 +46,10 @@ describe("Sidebar", () => {
         sessions,
         error: undefined,
         loaded: true,
-        selected: [],
-        maxSelected: 3,
+        onCanvas: ["c1"],
         now: Date.parse("2026-11-01T12:00:05.000Z"),
         connection: { status: "open", attempt: 0, gaps: 0 },
         onRetry: () => {},
-        onToggle: () => {},
       }),
     );
 
@@ -67,6 +65,13 @@ describe("Sidebar", () => {
       'class="agent-icon agent-claude-code" role="img" aria-label="Claude Code"',
     );
     expect(html).toContain('class="agent-icon agent-codex" role="img" aria-label="Codex"');
+  });
+
+  it("lets sessions be dragged but not clicked onto the canvas", () => {
+    const html = render([session("c1"), session("d1")]);
+    expect(html.match(/draggable="true"/g)).toHaveLength(2);
+    expect(html).not.toContain("<button");
+    expect(html).toContain('class="session is-selected"');
   });
 
   it("shows no group headings for a local daemon", () => {

@@ -1,4 +1,7 @@
 import {
+  CanvasMoveBody,
+  type CanvasResponse,
+  DomainOverrideBody,
   EventsQuery,
   type EventsResponse,
   IngestClientMessage,
@@ -26,7 +29,11 @@ import {
   secretsMatch,
   sessionCookieHeader,
 } from "./auth.js";
+import type { IngestRoute } from "./handoff-route.js";
+import { registerHandoffRoutes, registerInboxRoutes } from "./handoff-routes.js";
+import type { HandoffRoute, HandoffService } from "./handoff-service.js";
 import type { Hub } from "./hub.js";
+import type { Inbox } from "./inbox.js";
 import { LOGIN_PAGE } from "./login-page.js";
 
 /** Close code for a request the server refuses (RFC 6455 "policy violation"). */
@@ -73,12 +80,20 @@ export type ServerOptions = {
   webDir?: string;
   /** Default `local`. */
   access?: Access;
+  /** Drafting, storing and routing handoffs (`/handoffs`). */
+  handoffs?: HandoffService;
+  /** Team server: where `/ingest` connections register so handoffs reach their daemon. */
+  ingestRoute?: IngestRoute;
+  /** This machine's handoff inbox (`/inbox`). Never on a team server. */
+  inbox?: Inbox;
 };
+
+export type { HandoffRoute };
 
 /** Paths a team server answers without a token. */
 const PUBLIC_PATHS = new Set(["/login", "/health"]);
 /** Paths that answer with data (401 when unauthorized) rather than pages (redirect to login). */
-const API_PATHS = new Set(["/sessions", "/events", "/ws", "/ingest"]);
+const API_PATHS = new Set(["/sessions", "/events", "/ws", "/ingest", "/handoffs", "/canvas"]);
 
 const LoginBody = z.object({ token: z.string().min(1).max(1024) });
 
@@ -137,7 +152,7 @@ export async function createServer(hub: Hub, logger: Logger, options: ServerOpti
       return reply.header("set-cookie", sessionCookieHeader(team.token)).send({ ok: true });
     });
 
-    registerIngest(app, hub, logger);
+    registerIngest(app, hub, logger, options);
   } else
     app.addHook("onRequest", async (req, reply) => {
       if (!isLocalRequest(req.headers)) {
@@ -179,6 +194,31 @@ export async function createServer(hub: Hub, logger: Logger, options: ServerOpti
 
   app.get("/sessions", async (): Promise<SessionsResponse> => ({ sessions: hub.sessions() }));
 
+  // Pin a session's domain label by hand; `{ "label": null }` goes back to automatic.
+  app.put<{ Params: { sessionId: string } }>("/sessions/:sessionId/domain", async (req, reply) => {
+    const body = DomainOverrideBody.safeParse(req.body);
+    if (!body.success)
+      return reply.code(400).send({ error: "body must be { label: <domain> | null }" });
+    if (!hub.setDomainOverride(req.params.sessionId, body.data.label)) {
+      return reply.code(404).send({ error: "unknown session" });
+    }
+    const session = hub.sessions().find((s) => s.sessionId === req.params.sessionId);
+    return session?.domain ?? { label: body.data.label };
+  });
+
+  // The shared canvas: which session cards are on it, and where.
+  app.get("/canvas", async (): Promise<CanvasResponse> => ({ positions: hub.canvasPositions() }));
+  app.put("/canvas/positions", async (req, reply) => {
+    const body = CanvasMoveBody.safeParse(req.body);
+    if (!body.success) {
+      return reply
+        .code(400)
+        .send({ error: "body must be { positions: { <key>: { x, y } }, removed?: [<key>] }" });
+    }
+    hub.moveCanvasNodes(body.data.positions, body.data.removed ?? []);
+    return reply.code(204).send();
+  });
+
   app.get("/events", async (req, reply): Promise<EventsResponse | undefined> => {
     const query = EventsQuery.safeParse(req.query);
     if (!query.success) {
@@ -189,6 +229,10 @@ export async function createServer(hub: Hub, logger: Logger, options: ServerOpti
   });
 
   app.get("/health", async () => ({ ok: true, epoch: hub.epoch, seq: hub.seq }));
+
+  if (options.handoffs) registerHandoffRoutes(app, options.handoffs);
+  // Confirm pages act on this machine, so a server reachable from elsewhere never has them.
+  if (options.inbox && !team) registerInboxRoutes(app, options.inbox);
 
   if (options.webDir === undefined) {
     app.get("/", async (_req, reply) => reply.type("text/plain").send(NO_VIEWER));
@@ -208,7 +252,7 @@ type TeamApp = FastifyInstance<
 >;
 
 /** `/ingest`: daemons push batches of events; each is acked once the hub holds it. */
-function registerIngest(app: TeamApp, hub: Hub, logger: Logger): void {
+function registerIngest(app: TeamApp, hub: Hub, logger: Logger, options: ServerOptions): void {
   app.get("/ingest", { websocket: true }, (socket, req) => {
     const query = IngestQuery.safeParse(req.query);
     if (!query.success) {
@@ -233,6 +277,8 @@ function registerIngest(app: TeamApp, hub: Hub, logger: Logger): void {
     socket.on("pong", () => {
       alive = true;
     });
+    options.ingestRoute?.attach(source, socket);
+    options.handoffs?.daemonConnected(source);
 
     socket.on("message", (data, isBinary) => {
       alive = true;
@@ -242,14 +288,21 @@ function registerIngest(app: TeamApp, hub: Hub, logger: Logger): void {
         socket.close(CLOSE_POLICY, "invalid message");
         return;
       }
+      if (msg.type === "handoff_status") {
+        // Answers about handoffs; the service checks this daemon is the one asked.
+        options.handoffs?.fromDaemon(source, msg);
+        return;
+      }
       const accepted = hub.accept(msg.events, {
         ...(msg.backlog ? { backlog: true } : {}),
+        ...(msg.repos ? { repos: msg.repos } : {}),
         source,
       });
       send(socket, { type: "ack", batch: msg.batch, accepted });
     });
     socket.on("close", () => {
       clearInterval(ping);
+      options.ingestRoute?.detach(source, socket);
       log.info("daemon disconnected");
     });
   });

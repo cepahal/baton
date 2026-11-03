@@ -1,10 +1,12 @@
-import type { BatonEvent } from "@baton/core";
+import type { BatonEvent, RepoInfo } from "@baton/core";
 
 export type PublishOptions = {
   /** The events are history read at startup, not activity seen live. */
   backlog?: boolean;
   /** Display name of the daemon that sent the events (team server ingest only). */
   source?: string;
+  /** Git identity of the events' `projectPath`s, keyed by path (see `RepoTaggingSink`). */
+  repos?: Record<string, RepoInfo>;
 };
 
 /**

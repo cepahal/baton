@@ -3,6 +3,7 @@ import { useSessionEvents } from "../../hooks/useStore.js";
 import type { EventStore } from "../../lib/event-store.js";
 import { AgentIcon } from "../AgentIcon.js";
 import { LiveDot } from "../LiveDot.js";
+import { ChatHandoffBubble } from "./ChatHandoffBubble.js";
 import { Feed } from "./Feed.js";
 
 type Props = {
@@ -34,6 +35,9 @@ export function FeedColumn({ store, sessionId, info, live, onClose }: Props) {
         </button>
       </header>
       <Feed events={events} />
+      <footer className="column-foot">
+        <ChatHandoffBubble sessionId={sessionId} events={events.length} />
+      </footer>
     </section>
   );
 }

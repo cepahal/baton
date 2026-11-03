@@ -22,7 +22,12 @@ let client: TestClient | undefined;
 
 beforeEach(async () => {
   dirs = await tempProjects();
-  await mkdir(dirs.codexDir, { recursive: true });
+  // Today's rollout folder, where the replays write (UTC, like rolloutPath).
+  // Made up front so the watcher sees it from the start: a folder appearing
+  // mid-test is noticed late on a loaded machine, and the Codex replays then
+  // arrive only after the Claude ones, which defeats the overlap check.
+  const [y = "", m = "", d = ""] = new Date().toISOString().slice(0, 10).split("-");
+  await mkdir(join(dirs.codexDir, y, m, d), { recursive: true });
 });
 
 afterEach(async () => {
@@ -46,7 +51,9 @@ describe("Claude Code and Codex sessions at once", () => {
           projectsDir: dirs.projectsDir,
           codexDir: dirs.codexDir,
           speed: 1000,
-          maxGapMs: 5,
+          // Gaps long enough that both agents are still writing when the watcher
+          // picks the Codex rollouts up, even with the whole suite running.
+          maxGapMs: 20,
           as: r.as,
           seed: r.as,
           logger: silent,

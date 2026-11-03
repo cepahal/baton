@@ -90,171 +90,379 @@ button {
 }
 
 .app.has-panel {
-  grid-template-columns: 290px minmax(0, 1fr) minmax(420px, 46vw);
+  --panel-w: max(420px, 46vw);
+  grid-template-columns: 290px minmax(0, 1fr) var(--panel-w);
 }
 
-/* ---- board ----------------------------------------------------------------- */
+/* ---- canvas ---------------------------------------------------------------- */
 
-.board {
+.canvas {
+  position: relative;
   min-width: 0;
   min-height: 0;
-  position: relative;
-  overflow: auto;
+  overflow: hidden;
   border-radius: var(--radius-lg);
   background-color: var(--clay-2);
-  background-image:
-    linear-gradient(rgba(255, 138, 43, 0.14) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 138, 43, 0.14) 1px, transparent 1px);
-  background-size: 32px 32px;
-  background-attachment: local;
   box-shadow: var(--clay-pressed);
-  transition: box-shadow 0.15s ease;
 }
 
-.board.is-over {
-  box-shadow:
-    var(--clay-pressed),
-    inset 0 0 0 3px var(--aqua);
+.canvas .react-flow__node-repo,
+.canvas .react-flow__node-session {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.board-canvas {
-  position: relative;
-  min-width: 100%;
-  min-height: 100%;
-}
-
-.card-slot {
+/* Links between sessions of one repo: label pinned to the line's midpoint. */
+.link-label {
   position: absolute;
-  cursor: grab;
-  transition:
-    left 0.15s ease,
-    top 0.15s ease;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 3px rgba(40, 30, 20, 0.18);
+  color: var(--aqua-deep);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: all;
 }
 
-.card-slot:active {
-  cursor: grabbing;
+.link-label.is-lines {
+  font-weight: 700;
 }
 
-.card-slot.is-dragging {
-  opacity: 0.4;
+/* Conflict links: a blurred wide copy of the split line glows under it. */
+.link-glow {
+  stroke-width: 10;
+  stroke-linecap: round;
+  opacity: 0.45;
+  filter: blur(4px);
+  pointer-events: none;
+  animation: link-glow 1.8s ease-in-out infinite;
 }
 
-.card {
-  position: relative;
-  height: 100%;
-  border-radius: var(--radius-lg);
-  background: var(--gloss), var(--clay);
-  box-shadow: var(--clay-shadow);
-  border: 2px solid rgba(255, 138, 43, 0.25);
-  transition:
-    transform 0.12s ease,
-    box-shadow 0.12s ease,
-    border-color 0.12s ease;
+.link-glow.is-lines {
+  stroke-width: 14;
+  opacity: 0.7;
+  animation-duration: 1.1s;
 }
 
-.card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(255, 138, 43, 0.55);
+.link.is-file .react-flow__edge-path,
+.link.is-lines .react-flow__edge-path {
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 3px rgba(255, 31, 61, 0.9));
 }
 
-.card.is-open {
-  border-color: var(--aqua);
+@keyframes link-glow {
+  50% {
+    opacity: 0.15;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link-glow {
+    animation: none;
+  }
+}
+
+.link-label.is-file,
+.link-label.is-lines {
+  background: #fff1f2;
   box-shadow:
-    var(--clay-shadow),
-    0 0 0 4px rgba(255, 138, 43, 0.18);
+    0 0 0 1px rgba(255, 31, 61, 0.45),
+    0 0 8px rgba(255, 31, 61, 0.35);
 }
 
-.card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.link-arrow {
+  stroke: #fff;
+  stroke-width: 1;
+}
+
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--ink-soft);
+  pointer-events: none;
+}
+
+.canvas-error {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--error);
+  color: var(--ink);
+  box-shadow: var(--clay-shadow-sm);
+  z-index: 10;
+}
+
+.repo-group {
   width: 100%;
   height: 100%;
-  padding: 16px 14px 12px;
-  border: 0;
-  background: none;
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
-  border-radius: inherit;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 250, 244, 0.55);
+  border: 2px dashed rgba(217, 98, 10, 0.25);
 }
 
-.card-head {
+.repo-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
-  padding-right: 30px;
+  height: 44px;
+  padding: 12px 16px 0;
+  cursor: grab;
 }
 
-.card-name {
+.repo-title {
   font-weight: 700;
   font-size: 15px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
-.card-owner {
+.repo-sub {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.repo-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--aqua-deep);
+  background: var(--prompt);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.scard {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 236px;
+  height: 132px;
+  padding: 12px 14px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  background: var(--gloss), var(--clay);
+  box-shadow: var(--clay-shadow-sm);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.react-flow__node.selected .scard,
+.scard:hover {
+  border-color: rgba(255, 138, 43, 0.4);
+}
+
+.scard.is-open {
+  border-color: var(--aqua);
+}
+
+.scard-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.scard-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.scard-user {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px 2px 4px;
+  border-radius: 999px;
+  background: var(--tool);
+  color: var(--tool-ink);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.agent-badge svg {
+  width: 13px;
+  height: 13px;
+}
+
+.scard-remove {
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.scard-remove:hover {
+  color: var(--coral);
+}
+
+.domain {
+  position: relative;
+  align-self: flex-start;
+}
+
+.domain-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  align-self: flex-start;
-  padding: 3px 10px 3px 3px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--aqua-deep);
+  min-width: 30px;
+  min-height: 20px;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: #ffeedd;
-  box-shadow: var(--clay-shadow-sm);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.card-owner-orb {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  font-size: 11px;
-  color: #fff;
-  background: var(--gloss), linear-gradient(180deg, #ffab5e, var(--aqua-deep));
+.domain-chip.is-blank {
+  border-style: dashed;
+  background: transparent;
 }
 
-.card-summary {
-  flex: 1;
-  min-height: 0;
+.domain-conf {
+  font-weight: 500;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+}
+
+.is-frontend {
+  --domain: #3b82f6;
+}
+.is-backend {
+  --domain: #2a9d55;
+}
+.is-ml {
+  --domain: #8b5cf6;
+}
+.is-data {
+  --domain: #0e9fae;
+}
+.is-infra {
+  --domain: #d9620a;
+}
+
+.domain-chip:not(.is-blank),
+.domain-option:not(.is-auto) {
+  border-color: color-mix(in srgb, var(--domain) 45%, transparent);
+  color: var(--domain);
+}
+
+.domain-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  overflow: hidden;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--clay);
+  box-shadow: var(--clay-shadow);
 }
 
-.card-label {
-  margin-top: 4px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--aqua-deep);
+.domain-option {
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.card-text {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+.domain-option:hover,
+.domain-option[aria-checked="true"] {
+  background: var(--clay-2);
+}
+
+.domain-option.is-auto {
+  color: var(--ink-soft);
+  border-top: 1px solid var(--line);
+}
+
+.scard-branch {
   overflow: hidden;
-  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
   color: var(--ink-soft);
 }
 
-.card-text.is-faint {
+.scard-cwd {
   color: var(--ink-faint);
 }
 
-.card-foot {
+.is-faint {
+  color: var(--ink-faint);
+}
+
+/* Possible I/O mismatch with another session: a caution sign + one line. */
+.scard-caution {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #fff7e0;
+  box-shadow: inset 0 0 0 1px #f2c14e;
+  color: #7a4b00;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.scard-caution-icon {
+  color: #d98a00;
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+.scard-caution-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.scard-caution-more {
+  margin-left: auto;
+  font-weight: 700;
+}
+
+.scard-foot {
+  margin-top: auto;
   font-size: 11px;
   color: var(--ink-faint);
-  border-top: 1px solid var(--line);
-  padding-top: 8px;
 }
 
 .panel {
@@ -300,9 +508,14 @@ button {
 
 .brand h1 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
+  line-height: 0;
+}
+
+/* The navy wordmark; its height sets the brand row. */
+.brand-logo {
+  display: block;
+  height: 30px;
+  width: auto;
 }
 
 /* A glossy aqua bubble. */
@@ -408,15 +621,20 @@ button {
   border-radius: var(--radius);
   background: var(--clay);
   box-shadow: var(--clay-shadow-sm);
-  cursor: pointer;
+  cursor: grab;
+  user-select: none;
   transition:
     box-shadow 0.15s ease,
     transform 0.15s ease,
     background 0.15s ease;
 }
 
-.session:hover:not(:disabled) {
+.session:hover {
   transform: translateY(-1px);
+}
+
+.session:active {
+  cursor: grabbing;
 }
 
 .session.is-selected {
@@ -424,11 +642,6 @@ button {
   box-shadow:
     var(--clay-pressed),
     0 0 0 2px rgba(43, 179, 217, 0.35);
-}
-
-.session:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
 }
 
 .session-text {
@@ -1027,12 +1240,434 @@ button.tool-main {
   }
 }
 
-.board > .placeholder {
-  position: absolute;
-  inset: 18px;
-  background: rgba(255, 250, 244, 0.7);
-}
-
 .panel > .column {
   flex: 1;
+}
+
+/* ---- handoff ---- */
+.scard-grip {
+  cursor: grab;
+  color: var(--ink-faint, #8a95aa);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  user-select: none;
+}
+.scard-grip:hover {
+  color: #ff8a2b;
+}
+.scard-grip:active {
+  cursor: grabbing;
+}
+.scard.is-drop-target {
+  outline: 2px dashed #ff8a2b;
+  outline-offset: 3px;
+}
+.feed-drag {
+  cursor: grab;
+}
+.feed-drag:active {
+  cursor: grabbing;
+}
+
+/* The whole-chat bubble at the bottom of a feed: dragged like a card's grip. */
+.column-foot {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, #fff0e0 0%, #ffffff 100%);
+}
+
+.chat-bubble {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: var(--gloss), var(--clay);
+  box-shadow: var(--clay-shadow-sm);
+  cursor: grab;
+  user-select: none;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.chat-bubble:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    var(--clay-shadow-sm),
+    0 0 0 2px rgba(255, 138, 43, 0.35);
+}
+
+.chat-bubble:active {
+  cursor: grabbing;
+  box-shadow: var(--clay-pressed);
+}
+
+.chat-bubble-grip {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--gloss), linear-gradient(180deg, #ffab5e, var(--aqua-deep));
+  box-shadow: 0 3px 8px rgba(217, 98, 10, 0.35);
+  color: #fff;
+  font-size: 13px;
+}
+
+.chat-bubble-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.chat-bubble-text b {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.chat-bubble-text span {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+/* ---- handoffs -------------------------------------------------------------- */
+
+.handoff-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(247, 239, 230, 0.55);
+  backdrop-filter: blur(6px) saturate(1.1);
+}
+
+.handoff-dialog {
+  width: min(820px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 22px;
+  border-radius: var(--radius-lg);
+  background: var(--gloss), var(--clay);
+  box-shadow:
+    var(--clay-shadow),
+    0 24px 60px rgba(196, 160, 128, 0.35);
+  color: var(--ink);
+}
+
+.handoff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.handoff-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.handoff-head h2::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 10px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: radial-gradient(
+    circle at 30% 30%,
+    #ffd09e 0%,
+    var(--aqua) 45%,
+    var(--aqua-deep) 100%
+  );
+  box-shadow: 0 2px 6px rgba(217, 98, 10, 0.4);
+}
+
+.handoff-close {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--clay);
+  box-shadow: var(--clay-shadow-sm);
+  color: var(--ink-soft);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.handoff-close:active {
+  box-shadow: var(--clay-pressed);
+}
+
+.handoff-route {
+  align-self: flex-start;
+  margin: 0;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--clay-2);
+  box-shadow: var(--clay-pressed);
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.handoff-route span {
+  color: var(--aqua-deep);
+}
+
+.handoff-meta,
+.handoff-loading {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+
+.handoff-warning,
+.handoff-error {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  box-shadow: var(--clay-shadow-sm);
+}
+
+.handoff-warning {
+  background: #fff3d6;
+  color: #7a5200;
+}
+
+.handoff-error {
+  background: var(--error);
+  color: #a3283c;
+}
+
+.handoff-text {
+  flex: 1;
+  min-height: 320px;
+  padding: 12px 14px;
+  resize: vertical;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--clay-2);
+  box-shadow: var(--clay-pressed);
+  color: var(--ink);
+  font: 12.5px / 1.5 var(--mono);
+}
+
+.handoff-text:focus {
+  outline: none;
+  box-shadow:
+    var(--clay-pressed),
+    0 0 0 2px rgba(255, 138, 43, 0.45);
+}
+
+.handoff-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.handoff-options label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.handoff-options input[type="text"],
+.handoff-options input:not([type]) {
+  flex: 0 1 260px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--clay-2);
+  box-shadow: var(--clay-pressed);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 400;
+}
+
+.handoff-options input:focus {
+  outline: none;
+  box-shadow:
+    var(--clay-pressed),
+    0 0 0 2px rgba(255, 138, 43, 0.45);
+}
+
+.handoff-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.handoff-actions button {
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--gloss), var(--clay);
+  box-shadow: var(--clay-shadow-sm);
+  color: var(--ink-soft);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.handoff-actions button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.handoff-actions button:active:not(:disabled) {
+  transform: none;
+  box-shadow: var(--clay-pressed);
+}
+
+.handoff-actions button.primary {
+  background: var(--gloss), linear-gradient(180deg, #ffab5e, var(--aqua-deep));
+  box-shadow:
+    0 6px 16px rgba(217, 98, 10, 0.35),
+    inset 0 -2px 4px rgba(120, 50, 0, 0.25);
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(120, 50, 0, 0.35);
+}
+
+.handoff-actions button.primary:active:not(:disabled) {
+  box-shadow: inset 0 2px 6px rgba(120, 50, 0, 0.4);
+}
+
+.handoff-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.handoff-tray {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  width: 340px;
+  max-height: 50vh;
+  overflow: auto;
+  border-radius: var(--radius-lg);
+  background: var(--gloss), var(--clay);
+  box-shadow: var(--clay-shadow);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+/* Over the canvas, clear of the open feed panel (and its "Whole chat" bubble). */
+@media (min-width: 901px) {
+  .app.has-panel .handoff-tray {
+    right: calc(var(--panel-w) + 18px + 16px);
+  }
+}
+
+.handoff-tray-head {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 16px;
+  border: 0;
+  background: none;
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.handoff-count {
+  margin-left: auto;
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: var(--gloss), linear-gradient(180deg, #ffab5e, var(--aqua-deep));
+  box-shadow: 0 3px 8px rgba(217, 98, 10, 0.3);
+  color: #fff;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.handoff-tray ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.handoff-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--clay);
+  box-shadow: var(--clay-shadow-sm);
+}
+
+.handoff-item.is-incoming {
+  background: var(--gloss), var(--prompt);
+  box-shadow:
+    var(--clay-shadow-sm),
+    inset 3px 0 0 var(--prompt-edge);
+}
+
+.handoff-item.is-incoming a {
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--gloss), linear-gradient(180deg, #ffab5e, var(--aqua-deep));
+  box-shadow: 0 3px 8px rgba(217, 98, 10, 0.3);
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.handoff-status {
+  padding: 1px 10px;
+  border-radius: 999px;
+  box-shadow: var(--clay-pressed);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.handoff-status.is-pending {
+  background: #fff3d6;
+  color: #9a6500;
+}
+
+.handoff-status.is-accepted {
+  background: #e3f7ea;
+  color: var(--leaf-deep);
+}
+
+.handoff-status.is-declined {
+  background: var(--error);
+  color: #b2364b;
+}
+
+button.scard-grip {
+  background: none;
+  border: 0;
+  font: inherit;
 }

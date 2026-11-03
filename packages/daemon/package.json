@@ -16,6 +16,7 @@
     "start": "node dist/index.js start"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
     "@baton/core": "workspace:*",
     "@fastify/static": "^10.1.8",
     "@fastify/websocket": "^11.3.6",

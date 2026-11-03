@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { type Logger, pino } from "pino";
 import { z } from "zod";
@@ -7,6 +8,8 @@ import {
   DEFAULT_PORT,
   DEFAULT_QUEUE_MB,
   DEFAULT_RECENT,
+  DEFAULT_SUMMARIZER_MODEL,
+  defaultStateFile,
   MIN_TOKEN_LENGTH,
   resolveConfig,
   resolveServeConfig,
@@ -14,6 +17,7 @@ import {
 } from "./config.js";
 import { startDaemon } from "./daemon.js";
 import { startForwarder } from "./forwarder.js";
+import { DEFAULT_OLLAMA_URL } from "./ollama.js";
 import { type ReplayOptions, runReplay } from "./replay.js";
 import { startTeamServer } from "./team-server.js";
 
@@ -47,11 +51,23 @@ BATON_TOKEN (at least ${MIN_TOKEN_LENGTH} characters).
   --buffer-mb, --buffer-size, --web-dir   As for start
   --active-minutes <n>  How recently a session must have sent events to be listed (default 1440)
 
+Environment (start and serve):
+  BATON_SUMMARIZER=ollama|anthropic|off
+                                   Model that drafts handoff summaries and settles
+                                   a session's domain when the rules are unsure.
+                                   ollama (default) uses a local Ollama and sends
+                                   nothing off the machine; anthropic uses
+                                   ANTHROPIC_API_KEY; off uses no model.
+  BATON_SUMMARIZER_MODEL=<id>      Model to use (ollama: the fastest installed
+                                   model; anthropic: ${DEFAULT_SUMMARIZER_MODEL})
+  BATON_OLLAMA_URL=<url>           Where Ollama listens (default ${DEFAULT_OLLAMA_URL})
+
 baton replay <fixture>: a Claude Code transcript or a Codex rollout (detected from its contents)
   --projects-dir <dir>  Claude Code projects directory a daemon is watching (for Claude Code fixtures)
   --codex-dir <dir>     Codex sessions directory a daemon is watching (for Codex fixtures)
   --speed <n>|<n>x      Play n times faster than recorded, e.g. 1x or 10x (default 1x)
   --as <name>           Simulated user: username in paths, and the run's label (default replay)
+  --cwd <dir>           Play the session as if it ran in <dir> (replaces its recorded working directory)
   --max-gap <seconds>   Cut longer pauses (after scaling) to this
   --seed <text>         Derive the new UUIDs from this, for a reproducible run
 
@@ -72,7 +88,12 @@ export type CliResult =
   | { command: "error"; message: string };
 
 /** Environment variables the CLI reads, validated like the flags. */
-const Env = z.object({ BATON_TOKEN: z.string().min(1).optional() });
+const Env = z.object({
+  BATON_TOKEN: z.string().min(1).optional(),
+  BATON_SUMMARIZER: z.string().min(1).optional(),
+  BATON_SUMMARIZER_MODEL: z.string().min(1).optional(),
+  BATON_OLLAMA_URL: z.string().min(1).optional(),
+});
 
 const ReplayArgs = z.object({
   fixture: z.string().min(1),
@@ -85,6 +106,7 @@ const ReplayArgs = z.object({
     .pipe(z.number().positive())
     .default(1),
   as: z.string().min(1).default("replay"),
+  cwd: z.string().min(1).optional(),
   maxGap: z.coerce.number().positive().optional(),
   seed: z.string().min(1).optional(),
   logLevel: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
@@ -104,13 +126,19 @@ export function parseCli(
   const { values, positionals } = parsed;
   if (values.help) return { command: "help" };
   const [command, ...rest] = positionals;
-  const token = Env.safeParse(env).data?.BATON_TOKEN;
+  const vars = Env.safeParse(env).data;
+  const token = vars?.BATON_TOKEN;
+  const summarizer = {
+    summarizer: vars?.BATON_SUMMARIZER,
+    summarizerModel: vars?.BATON_SUMMARIZER_MODEL,
+    ollamaUrl: vars?.BATON_OLLAMA_URL,
+  };
 
   try {
     switch (command) {
       case "start": {
         if (rest.length > 0) return unexpected(rest[0]);
-        const misplaced = firstSet(values, ["host", "speed", "as", "max-gap", "seed"]);
+        const misplaced = firstSet(values, ["host", "speed", "as", "cwd", "max-gap", "seed"]);
         if (misplaced) return { command: "error", message: `--${misplaced} isn't a start option` };
         const remoteOnly = firstSet(values, ["name", "queue-dir", "queue-mb"]);
         if (values.server === undefined && remoteOnly) {
@@ -132,6 +160,7 @@ export function parseCli(
           poll: values.poll,
           logLevel: values["log-level"],
           webDir: values["web-dir"],
+          ...summarizer,
           remote:
             values.server === undefined
               ? undefined
@@ -175,6 +204,7 @@ export function parseCli(
           activeMinutes: values["active-minutes"],
           logLevel: values["log-level"],
           webDir: values["web-dir"],
+          ...summarizer,
         });
         return { command: "serve", config };
       }
@@ -191,6 +221,7 @@ export function parseCli(
           codexDir: values["codex-dir"],
           speed: values.speed,
           as: values.as,
+          cwd: values.cwd,
           maxGap: values["max-gap"],
           seed: values.seed,
           logLevel: values["log-level"],
@@ -203,6 +234,7 @@ export function parseCli(
             ...(args.codexDir === undefined ? {} : { codexDir: args.codexDir }),
             speed: args.speed,
             as: args.as,
+            ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
             logLevel: args.logLevel,
             ...(args.maxGap === undefined ? {} : { maxGapMs: args.maxGap * 1000 }),
             ...(args.seed === undefined ? {} : { seed: args.seed }),
@@ -220,7 +252,13 @@ export function parseCli(
     const issue = err.issues[0];
     const path = issue?.path ?? [];
     const key = path[0] === "remote" ? path[1] : path[0];
-    const label = key === "token" ? "BATON_TOKEN" : `--${flagName(key)}`;
+    const envNames: Record<string, string> = {
+      token: "BATON_TOKEN",
+      summarizer: "BATON_SUMMARIZER",
+      summarizerModel: "BATON_SUMMARIZER_MODEL",
+      ollamaUrl: "BATON_OLLAMA_URL",
+    };
+    const label = (typeof key === "string" ? envNames[key] : undefined) ?? `--${flagName(key)}`;
     return { command: "error", message: `${label}: ${issue?.message}` };
   }
 }
@@ -250,6 +288,7 @@ function parse(argv: readonly string[]) {
       "queue-mb": { type: "string" },
       speed: { type: "string" },
       as: { type: "string" },
+      cwd: { type: "string" },
       "max-gap": { type: "string" },
       seed: { type: "string" },
       help: { type: "boolean", short: "h" },
@@ -327,7 +366,10 @@ async function startCommand(
   logger: Logger,
 ): Promise<() => Promise<void>> {
   if (result.command === "serve") {
-    const server = await startTeamServer(result.config, logger);
+    const server = await startTeamServer(result.config, logger, {
+      canvasFile: join(dirname(defaultStateFile()), "team-canvas.json"),
+      handoffsFile: join(dirname(defaultStateFile()), "team-handoffs.json"),
+    });
     logger.info(
       { host: result.config.host, port: server.port },
       `baton team server is running on port ${server.port}`,

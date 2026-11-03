@@ -1,9 +1,15 @@
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
+import { userInfo } from "node:os";
+import { dirname, join } from "node:path";
 import type { Logger } from "pino";
+import { CanvasStore } from "./canvas-store.js";
 import { type DaemonConfig, HOST } from "./config.js";
 import { MemoryEventLog } from "./event-log.js";
+import { type HandoffDeps, localHandoffs } from "./handoff-kit.js";
 import { Hub } from "./hub.js";
+import { modelsFor } from "./models.js";
+import { RepoResolver } from "./repo-info.js";
+import { RepoTaggingSink } from "./repo-sink.js";
 import { createServer } from "./server.js";
 import { logSources } from "./sources.js";
 import { StateStore } from "./state-store.js";
@@ -11,6 +17,7 @@ import { TranscriptWatcher } from "./watcher.js";
 
 export type Daemon = {
   hub: Hub;
+  handoffs: Awaited<ReturnType<typeof localHandoffs>>;
   watcher: TranscriptWatcher;
   server: Awaited<ReturnType<typeof createServer>>;
   /** `http://127.0.0.1:<port>` */
@@ -24,7 +31,11 @@ export type Daemon = {
  * Starts the hub and server first, so viewers can connect, then the watcher,
  * which publishes the startup backlog into the hub.
  */
-export async function startDaemon(config: DaemonConfig, logger: Logger): Promise<Daemon> {
+export async function startDaemon(
+  config: DaemonConfig,
+  logger: Logger,
+  deps: HandoffDeps = {},
+): Promise<Daemon> {
   const activeWindowMs = config.activeMinutes * 60_000;
   const state = await StateStore.load(config.stateFile, logger.child({ component: "state" }));
   const hubLogger = logger.child({ component: "hub" });
@@ -39,17 +50,43 @@ export async function startDaemon(config: DaemonConfig, logger: Logger): Promise
         "event buffer full; dropping the oldest events (raise --buffer-mb to keep more)",
       ),
   });
-  const hub = new Hub({ log, activeWindowMs, logger: hubLogger });
+  const { tieBreaker, summarize } = modelsFor(config, hubLogger);
+  const canvas = new CanvasStore({
+    file: join(dirname(config.stateFile), "canvas.json"),
+    logger: hubLogger,
+  });
+  await canvas.load();
+  const hub = new Hub({
+    log,
+    activeWindowMs,
+    logger: hubLogger,
+    canvas,
+    ...userField(),
+    ...(tieBreaker ? { tieBreaker } : {}),
+  });
+  let port = config.port;
+  const handoffs = await localHandoffs({
+    hub,
+    dataDir: dirname(config.stateFile),
+    logger: logger.child({ component: "handoffs" }),
+    origin: () => `http://${HOST}:${port}`,
+    summarize,
+    deps,
+  });
   const serverLogger = logger.child({ component: "server" });
   const webDir = await viewerDir(config.webDir, serverLogger);
-  const server = await createServer(hub, serverLogger, webDir === undefined ? {} : { webDir });
+  const server = await createServer(hub, serverLogger, {
+    ...(webDir === undefined ? {} : { webDir }),
+    handoffs: handoffs.service,
+    inbox: handoffs.inbox,
+  });
   await server.listen({ host: HOST, port: config.port });
   const address = server.server.address();
-  const port = typeof address === "object" && address ? address.port : config.port;
+  port = typeof address === "object" && address ? address.port : config.port;
 
   const watcher = new TranscriptWatcher({
     sources: logSources({ "claude-code": config.projectsDir, codex: config.codexDir }),
-    sink: hub,
+    sink: new RepoTaggingSink(hub, new RepoResolver()),
     state,
     logger: logger.child({ component: "watcher" }),
     backlogPerSession: config.backlog === "all" ? Number.POSITIVE_INFINITY : config.backlog,
@@ -68,12 +105,15 @@ export async function startDaemon(config: DaemonConfig, logger: Logger): Promise
   const close = () => {
     closing ??= (async () => {
       await watcher.close();
-      await state.flush();
+      // Stop taking requests first, so writes they make are in the flush.
       await server.close();
+      await state.flush();
+      await canvas.flush();
+      await handoffs.store.flush();
     })();
     return closing;
   };
-  return { hub, watcher, server, url: `http://${HOST}:${port}`, port, close };
+  return { hub, handoffs, watcher, server, url: `http://${HOST}:${port}`, port, close };
 }
 
 /** `dir` if it holds a built viewer, otherwise undefined (with a warning). */
@@ -85,4 +125,18 @@ export async function viewerDir(dir: string, logger: Logger): Promise<string | u
   }
   logger.warn({ webDir: dir }, "no built viewer found; run `pnpm build` to serve it at /");
   return undefined;
+}
+
+const userField = (): { user?: string } => {
+  const user = localUserName();
+  return user === undefined ? {} : { user };
+};
+
+/** The OS user's name, or undefined when there isn't one (e.g. an arbitrary container uid). */
+export function localUserName(): string | undefined {
+  try {
+    return userInfo().username || undefined;
+  } catch {
+    return undefined;
+  }
 }
