@@ -44,7 +44,9 @@ export function createLogger(level: LevelWithSilent, file?: string): Logger {
     options,
     multistream([
       { level: streamLevel, stream: process.stdout },
-      { level: streamLevel, stream: pino.destination({ dest: file, mkdir: true, sync: false }) },
+      // Synchronous, so the last lines before a `process.exit` (a refusal, a
+      // crash) reach the file the report reads. Baton logs little.
+      { level: streamLevel, stream: pino.destination({ dest: file, mkdir: true, sync: true }) },
     ]),
   );
 }

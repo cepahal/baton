@@ -172,6 +172,12 @@ describe("forwarder upgrade", () => {
       const old = await DiskQueue.open({ dir: queueDir, maxBytes: 1 << 20, logger: silent });
       await old.push([{ backlog: false, event: event("/home/dev/private", "queued long ago") }]);
       await old.close();
+      // `baton share` ran after the upgrade but before the daemon restarted.
+      await writeSharing(join(dirs.root, "sharing.json"), {
+        paused: false,
+        repos: [],
+        folders: [join(dirs.root, "elsewhere")],
+      });
       await dirs.append(dirs.transcript(SESSION_A), `${record(SESSION_A, "user", "hi")}\n`);
 
       const forwarder = await startForwarder(

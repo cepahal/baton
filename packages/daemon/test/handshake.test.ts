@@ -121,6 +121,7 @@ describe("version handshake", () => {
       queue,
       logger: silent,
       minRetryMs: 10,
+      nameTakenGraceMs: 0,
       onRefused: (m) => refusals.push(m),
     });
     cleanups.push(() => sink.close());
@@ -132,6 +133,36 @@ describe("version handshake", () => {
     await new Promise((r) => setTimeout(r, 200));
     expect(refusals).toHaveLength(1);
     expect(sink.connected).toBe(false);
+  });
+
+  it("keeps retrying a taken name for a while, in case the holder is a dead connection", async () => {
+    const server = await serve();
+    const holder = connect(server, current("ghost"));
+    await expect.poll(() => holder.messages.length).toBe(1);
+
+    const dir = await mkdtemp(join(tmpdir(), "baton-handshake-"));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    const queue = await DiskQueue.open({ dir, maxBytes: 1 << 20, logger: silent });
+    const refusals: string[] = [];
+    const sink = new RemoteSink({
+      server: server.url,
+      token: TOKEN,
+      name: "ghost",
+      queue,
+      logger: silent,
+      minRetryMs: 10,
+      maxRetryMs: 50,
+      onRefused: (m) => refusals.push(m),
+    });
+    cleanups.push(() => sink.close());
+    sink.start();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(refusals).toEqual([]);
+
+    holder.ws.terminate();
+    await expect.poll(() => sink.serverVersion?.protocol).toBe(INGEST_PROTOCOL_VERSION);
+    expect(refusals).toEqual([]);
+    expect(sink.refused).toBeUndefined();
   });
 });
 

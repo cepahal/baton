@@ -23,6 +23,7 @@ import { type LocalAction, runLocal } from "./local-commands.js";
 import { createLogger, logFilePath } from "./logging.js";
 import { DEFAULT_OLLAMA_URL } from "./ollama.js";
 import { type ReplayOptions, runReplay } from "./replay.js";
+import { type Close, runService } from "./run-service.js";
 import { startTeamServer } from "./team-server.js";
 
 export const USAGE = `Usage:
@@ -439,16 +440,17 @@ export async function main(argv: readonly string[]): Promise<void> {
     result.config.logLevel,
     logFilePath(stateDir, result.command === "serve" ? "server" : "daemon"),
   );
-  let close: () => Promise<void> = async () => {};
-  const refused = (message: string) => {
-    // The server won't take this daemon until something changes here: say so and stop.
-    process.stderr.write(`
-baton: ${message}
-`);
-    close().finally(() => process.exit(1));
-  };
+  let close: Close;
   try {
-    close = await startCommand(result, logger, refused);
+    // A refused daemon won't be taken until something changes here: say so and stop.
+    close = await runService({
+      start: (onRefused) => startCommand(result, logger, onRefused),
+      report: (message) =>
+        process.stderr.write(`
+baton: ${message}
+`),
+      exit: (code) => process.exit(code),
+    });
   } catch (err) {
     logger.fatal({ err }, "baton could not start");
     process.exitCode = 1;

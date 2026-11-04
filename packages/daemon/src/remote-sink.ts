@@ -39,7 +39,14 @@ export type RemoteSinkOptions = {
   /** This machine's id (see `loadMachineId`). Default: a new one per sink. */
   machine?: string;
   /**
-   * The server refused this daemon for good (wrong version, name taken).
+   * How long the server may keep answering `name_taken` before the sink gives
+   * up. The holder is often this machine's own dead connection, which the
+   * server drops within two of its pings. Default 60 s.
+   */
+  nameTakenGraceMs?: number;
+  /**
+   * The server refused this daemon for good (wrong version, or the name stayed
+   * taken past `nameTakenGraceMs`).
    * The sink has stopped reconnecting; the message says what to do.
    */
   onRefused?: (message: string) => void;
@@ -94,6 +101,8 @@ export class RemoteSink implements EventSink {
   #warnedNoHello = false;
   /** Refused for good: stop reconnecting. */
   #refused: string | undefined;
+  /** When the server first said `name_taken` since the last good connection. */
+  #nameTakenSince: number | undefined;
   #drainWaiters: (() => void)[] = [];
   /** Handoff answers waiting for a connection; the server resends offers on connect anyway. */
   #control: HandoffControl[] = [];
@@ -252,14 +261,19 @@ export class RemoteSink implements EventSink {
       return;
     }
     if (msg.data.type === "error") {
-      if (msg.data.code === "version" || msg.data.code === "name_taken") {
+      if (msg.data.code === "version") {
         this.#refuse(msg.data.message);
+        return;
+      }
+      if (msg.data.code === "name_taken") {
+        this.#nameTaken(msg.data.message);
         return;
       }
       this.#log.error({ message: msg.data.message }, "team server reported an error");
       return;
     }
     if (msg.data.type === "ingest_hello") {
+      this.#nameTakenSince = undefined;
       this.#server = { app: msg.data.app, protocol: msg.data.protocol };
       if (msg.data.protocol !== INGEST_PROTOCOL_VERSION) {
         this.#refuse(
@@ -326,6 +340,21 @@ export class RemoteSink implements EventSink {
     }, this.options.ackTimeoutMs ?? 30_000);
     this.#inFlight = { batch, count: items.length, timer };
     socket.send(JSON.stringify(msg));
+  }
+
+  /**
+   * The name is held by another connection. Keep retrying (the server closes
+   * this socket, so the usual backoff applies) until the grace runs out, since
+   * the holder may be our own connection that died without closing.
+   */
+  #nameTaken(message: string): void {
+    const now = Date.now();
+    this.#nameTakenSince ??= now;
+    if (now - this.#nameTakenSince >= (this.options.nameTakenGraceMs ?? 60_000)) {
+      this.#refuse(message);
+      return;
+    }
+    this.#log.warn({ message }, "team server says this name is in use; retrying");
   }
 
   /** Stops for good: logs why, tells the owner, and closes the socket without retrying. */

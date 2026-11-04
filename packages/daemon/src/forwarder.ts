@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import Fastify, { LogController } from "fastify";
 import type { Logger } from "pino";
@@ -44,24 +44,30 @@ export async function startForwarder(
 ): Promise<Forwarder> {
   const stateDir = dirname(config.stateFile);
   const sharingFile = sharingFilePath(config.stateFile);
-  const firstSharingRun = await access(sharingFile).then(
-    () => false,
-    () => true,
-  );
   const state = await StateStore.load(config.stateFile, logger.child({ component: "state" }));
   const queue = await DiskQueue.open({
     dir: remote.queueDir,
     maxBytes: remote.queueMb * 1024 * 1024,
     logger: logger.child({ component: "queue" }),
   });
-  if (firstSharingRun && queue.size > 0) {
-    // Queued by a Baton from before sharing controls, when everything was sent:
-    // none of it was chosen, so none of it goes.
-    logger.warn(
-      { events: queue.size },
-      "dropping events queued by an older Baton before sharing controls existed",
-    );
-    await queue.ack(queue.size);
+  // Marks a queue whose events all went through SharingSink. Without it, the
+  // queue is from a Baton before sharing controls, when everything was sent:
+  // none of it was chosen, so none of it goes. (Keyed on the queue itself, not
+  // sharing.json, which `baton share` can create before the daemon restarts.)
+  const filteredMarker = join(remote.queueDir, "sharing-filtered");
+  const filtered = await access(filteredMarker).then(
+    () => true,
+    () => false,
+  );
+  if (!filtered) {
+    if (queue.size > 0) {
+      logger.warn(
+        { events: queue.size },
+        "dropping events queued by an older Baton before sharing controls existed",
+      );
+      await queue.ack(queue.size);
+    }
+    await writeFile(filteredMarker, "");
   }
   const machine = await loadMachineId(join(stateDir, "machine-id"));
   let inboxPort = config.port;
