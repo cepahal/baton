@@ -1,4 +1,7 @@
-import { BlobId, NOTE_FILE_MAX_BYTES } from "@baton/core";
+import { BlobId, HANDOFF_PATCH_MAX, NOTE_FILE_MAX_BYTES } from "@baton/core";
+
+/** Largest file fetched: a note file or a handoff's patch. */
+const FETCH_MAX_BYTES = Math.max(NOTE_FILE_MAX_BYTES, HANDOFF_PATCH_MAX);
 
 /** The team server's HTTP base for a `--server` URL given as ws(s) or http(s). */
 export function httpBase(server: string): string {
@@ -12,8 +15,8 @@ export function httpBase(server: string): string {
 }
 
 /**
- * Fetches a sticky note's file from the team server, checking it is the file
- * asked for (its SHA-256) and no bigger than a note file may be.
+ * Fetches a sticky note's file or a handoff's patch from the team server,
+ * checking it is the file asked for (its SHA-256) and not too big.
  */
 export function remoteBlobFetcher(
   server: string,
@@ -29,7 +32,7 @@ export function remoteBlobFetcher(
     });
     if (!res.ok) return undefined;
     const bytes = new Uint8Array(await res.arrayBuffer());
-    if (bytes.length > NOTE_FILE_MAX_BYTES) return undefined;
+    if (bytes.length > FETCH_MAX_BYTES) return undefined;
     const digest = Buffer.from(await crypto.subtle.digest("SHA-256", bytes)).toString("hex");
     return digest === sha256 ? bytes : undefined;
   };

@@ -73,21 +73,34 @@ export {
   HANDOFF_SNIPPET_MAX_BYTES,
   HANDOFF_STATE_MAX,
   type HandoffHeader,
+  handoffCommand,
   handoffFilePath,
+  handoffPatchPath,
   handoffPrompt,
   heuristicSummary,
   renderHandoff,
   renderSnippet,
   SUMMARIZER_INPUT_MAX_BYTES,
   SummarizerReply,
+  shellFolder,
   summarizerInput,
   withFiles,
 } from "./handoff/packet.js";
+export { isSecretPath, patchPaths, REDACTED_LINE, redactPatch } from "./handoff/patch.js";
 export {
+  CommitId,
   HANDOFF_ID_PATTERN,
   HANDOFF_MARKDOWN_MAX,
+  HANDOFF_NOTE_MAX,
+  HANDOFF_PATCH_MAX,
   Handoff,
+  HandoffAcceptRequest,
+  HandoffAnswerError,
+  HandoffApply,
+  HandoffCode,
   HandoffCreate,
+  HandoffDeclineRequest,
+  HandoffDelivery,
   HandoffDraft,
   HandoffDraftRequest,
   HandoffId,
@@ -97,6 +110,8 @@ export {
   HandoffStatus,
   HandoffSummary,
   HandoffsResponse,
+  HandoffView,
+  SkippedFile,
 } from "./handoff/schema.js";
 export { formatBytes, type NoteHeader, renderNote } from "./notes/render.js";
 export {
@@ -122,6 +137,15 @@ export {
 } from "./notes/schema.js";
 export { type InlineImageType, looksLikeMarkup, sniffImage } from "./notes/sniff.js";
 export {
+  MachineId,
+  MeResponse,
+  PAIRING_CODE_TTL_MS,
+  PairClaimRequest,
+  PairCodeResponse,
+  Pairing,
+  PairRequest,
+} from "./pairing/schema.js";
+export {
   AckMessage,
   CanvasKey,
   CanvasMessage,
@@ -137,9 +161,13 @@ export {
   EventsQuery,
   EventsResponse,
   GapMessage,
+  HandoffCodeMessage,
+  HandoffCodeRequestMessage,
   HandoffMessage,
   HandoffOfferMessage,
-  HandoffStatusMessage,
+  HandoffWriteMessage,
+  HandoffWriteResult,
+  HandoffWrittenMessage,
   HelloMessage,
   IngestClientMessage,
   IngestHelloMessage,
@@ -150,6 +178,7 @@ export {
   PublishMessage,
   projectName,
   RepoInfo,
+  RequestId,
   ServerMessage,
   SessionDomain,
   SessionInfo,

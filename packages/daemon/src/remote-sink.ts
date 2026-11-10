@@ -1,8 +1,11 @@
 import {
   BATON_VERSION,
   type BatonEvent,
+  type HandoffCodeMessage,
+  type HandoffCodeRequestMessage,
   type HandoffOfferMessage,
-  type HandoffStatusMessage,
+  type HandoffWriteMessage,
+  type HandoffWrittenMessage,
   INGEST_PROTOCOL_VERSION,
   IngestServerMessage,
   type PublishMessage,
@@ -35,7 +38,11 @@ export type RemoteSinkOptions = {
   /** A batch not acked within this is assumed lost and the connection is dropped. Default 30 s. */
   ackTimeoutMs?: number;
   /** Handoff messages from the server, for this machine's inbox. */
-  onHandoff?: (message: HandoffOfferMessage) => void;
+  onHandoff?: (
+    message: HandoffOfferMessage | HandoffWriteMessage | HandoffCodeRequestMessage,
+  ) => void;
+  /** The server accepted the connection (hello with a matching protocol). */
+  onConnected?: () => void;
   /** This machine's id (see `loadMachineId`). Default: a new one per sink. */
   machine?: string;
   /**
@@ -52,8 +59,8 @@ export type RemoteSinkOptions = {
   onRefused?: (message: string) => void;
 };
 
-/** Answers about handoffs, sent up the same connection. */
-export type HandoffControl = HandoffStatusMessage;
+/** Answers to the server's handoff requests, sent up the same connection. */
+export type HandoffControl = HandoffWrittenMessage | HandoffCodeMessage;
 
 type InFlight = { batch: number; count: number; timer: NodeJS.Timeout };
 
@@ -279,7 +286,9 @@ export class RemoteSink implements EventSink {
         this.#refuse(
           `The team server speaks protocol ${msg.data.protocol} (Baton ${msg.data.app}); this daemon speaks ${INGEST_PROTOCOL_VERSION} (Baton ${BATON_VERSION}). Update whichever is older.`,
         );
+        return;
       }
+      this.options.onConnected?.();
       return;
     }
     if (this.#server === undefined && !this.#warnedNoHello) {
@@ -288,7 +297,11 @@ export class RemoteSink implements EventSink {
         "the team server didn't say which version it runs; it's probably older than this daemon. Ask whoever runs it to update.",
       );
     }
-    if (msg.data.type === "handoff_offer") {
+    if (
+      msg.data.type === "handoff_offer" ||
+      msg.data.type === "handoff_write" ||
+      msg.data.type === "handoff_code_request"
+    ) {
       this.options.onHandoff?.(msg.data);
       return;
     }

@@ -82,14 +82,13 @@ export async function startDaemon(
     origin: () => `http://${HOST}:${port}`,
     summarize,
     deps,
-    fetchBlob: (sha256) => blobs.read(sha256),
+    blobs,
   });
   const serverLogger = logger.child({ component: "server" });
   const webDir = await viewerDir(config.webDir, serverLogger);
   const server = await createServer(hub, serverLogger, {
     ...(webDir === undefined ? {} : { webDir }),
     handoffs: handoffs.service,
-    inbox: handoffs.inbox,
     notes: { blobs, blobsInUse: () => handoffs.service.attachmentsInUse() },
     report: {
       logFile: logFilePath(dirname(config.stateFile), "daemon"),

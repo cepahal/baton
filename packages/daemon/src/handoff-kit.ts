@@ -1,42 +1,37 @@
 import { join } from "node:path";
 import type { Logger } from "pino";
-import { localRoute } from "./handoff-route.js";
+import type { BlobStore } from "./blob-store.js";
+import { codeReply } from "./code-bundle.js";
+import { type CodeReply, localRoute } from "./handoff-route.js";
 import { HandoffService } from "./handoff-service.js";
 import { HandoffStore } from "./handoff-store.js";
 import type { Hub } from "./hub.js";
 import { Inbox, type InboxOptions } from "./inbox.js";
 import { type Notifier, osNotify } from "./notify.js";
 import type { Summarizer } from "./summarizer.js";
-import { hasWindowsTerminal, type Launcher, launch } from "./terminal.js";
 
-/** What touches the desktop: swapped out in tests. */
+/** What touches the desktop or the checkout: swapped out in tests. */
 export type HandoffDeps = {
   notify?: Notifier | undefined;
-  launch?: Launcher | undefined;
   summarize?: Summarizer | undefined;
   summarizeTimeoutMs?: number;
+  /** Bundles a session's uncommitted changes. Default: `git` in the session's folder. */
+  code?: (dir: string | undefined) => Promise<CodeReply>;
   inbox?: Partial<InboxOptions>;
 };
 
-/** Inbox options shared by the local daemon and the forwarder's local server. */
-export function inboxOptions(
-  dataDir: string,
-  logger: Logger,
-  deps: HandoffDeps,
-): Omit<InboxOptions, "report" | "origin"> {
+/** Inbox options shared by the local daemon and the forwarder. */
+export function inboxOptions(logger: Logger, deps: HandoffDeps): Omit<InboxOptions, "origin"> {
   return {
     logger,
     notify: "notify" in deps ? deps.notify : osNotify,
-    launch: "launch" in deps ? deps.launch : launch,
-    hasWindowsTerminal,
-    foldersFile: join(dataDir, "repo-folders.json"),
     ...deps.inbox,
   };
 }
 
 /**
  * `baton start`: the hub, the service and the inbox all live in this process.
- * Offers go straight to the inbox; the inbox's answers straight to the service.
+ * Offers go straight to the inbox, and the only browser is this machine's.
  */
 export async function localHandoffs(options: {
   hub: Hub;
@@ -45,31 +40,34 @@ export async function localHandoffs(options: {
   origin: () => string;
   summarize?: Summarizer | undefined;
   deps?: HandoffDeps;
-  /** Reads a note file accepted here (this machine is the hub). */
-  fetchBlob?: (sha256: string) => Promise<Uint8Array | undefined>;
+  /** Where note files and attached patches live (this machine is the hub). */
+  blobs?: BlobStore;
 }): Promise<{ service: HandoffService; inbox: Inbox; store: HandoffStore }> {
   const store = new HandoffStore({
     file: join(options.dataDir, "handoffs.json"),
     logger: options.logger,
   });
   await store.load();
-  let service: HandoffService | undefined;
+  const { hub, blobs } = options;
+  const deps = options.deps ?? {};
+  const sessionDir = (sessionId: string) => hub.session(sessionId)?.projectPath;
   const inbox = new Inbox({
-    ...inboxOptions(options.dataDir, options.logger, options.deps ?? {}),
-    ...(options.fetchBlob ? { fetchBlob: options.fetchBlob } : {}),
+    ...(blobs ? { fetchBlob: (sha256: string) => blobs.read(sha256) } : {}),
+    sessionDir,
+    ...inboxOptions(options.logger, deps),
     origin: options.origin,
-    report: (message) => service?.fromDaemon(undefined, message),
   });
-  service = new HandoffService({
-    hub: options.hub,
+  const bundle = deps.code ?? ((dir: string | undefined) => codeReply(dir));
+  const service = new HandoffService({
+    hub,
     store,
-    route: localRoute(inbox),
+    route: localRoute(inbox, (sessionId) => bundle(sessionDir(sessionId))),
     logger: options.logger,
-    summarize:
-      options.deps && "summarize" in options.deps ? options.deps.summarize : options.summarize,
-    ...(options.deps?.summarizeTimeoutMs === undefined
+    ...(blobs ? { blobs } : {}),
+    summarize: "summarize" in deps ? deps.summarize : options.summarize,
+    ...(deps.summarizeTimeoutMs === undefined
       ? {}
-      : { summarizeTimeoutMs: options.deps.summarizeTimeoutMs }),
+      : { summarizeTimeoutMs: deps.summarizeTimeoutMs }),
   });
   // The inbox lives in memory: offer it the handoffs still waiting from before a restart.
   service.daemonConnected(undefined);

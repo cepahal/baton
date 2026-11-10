@@ -37,7 +37,10 @@ export const LOGIN_PAGE = `<!doctype html>
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token }),
     }).catch(() => undefined);
-    if (res && res.ok) location.assign("/");
+    // Back to the page that sent us here (only a path on this server), keeping its #fragment.
+    const next = new URL(new URLSearchParams(location.search).get("next") || "/", location.href);
+    const safe = next.origin === location.origin ? next.pathname + next.search : "/";
+    if (res && res.ok) location.assign(safe + location.hash);
     else error.textContent = res && res.status === 401 ? "Wrong token." : "Could not reach the server.";
   });
 </script>

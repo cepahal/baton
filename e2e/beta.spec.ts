@@ -1,11 +1,11 @@
 import { expect, type Page, test } from "@playwright/test";
 import {
+  BASE,
   cutNetwork,
   eventsOf,
   expectedEvents,
   handoffs,
   type Machine,
-  nodeOnMachine,
   onMachine,
   PNG,
   sessionOf,
@@ -118,17 +118,18 @@ test("a sticky note with markdown and an image syncs to a second browser, inertl
   await other.close();
 });
 
-test("a snippet handoff sent from the viewer is accepted on the receiving machine", async ({
+test("a handoff between different repos is accepted from the receiver's paired browser", async ({
   page,
+  browser,
 }) => {
   await signIn(page);
-  // Open bob's feed and drag one of its events onto alice's card.
+  // Open bob's feed (repo shop) and drag one of its events onto grace's card (repo speech).
   await card(page, "bob").locator(".scard-user").click();
   const column = page.locator("section.column");
   await expect(column).toBeVisible();
   const event = column.locator(".feed-drag").first();
   await expect(event).toBeVisible();
-  await event.dragTo(card(page, "alice"));
+  await event.dragTo(card(page, "grace"));
 
   const dialog = page.getByRole("dialog", { name: "Hand off" });
   await expect(dialog).toBeVisible();
@@ -139,25 +140,58 @@ test("a snippet handoff sent from the viewer is accepted on the receiving machin
 
   const sent = await until(
     async () =>
-      (await handoffs()).find((h) => h.kind === "snippet" && h.to.sessionId === idOf("alice")),
+      (await handoffs()).find((h) => h.kind === "snippet" && h.to.sessionId === idOf("grace")),
     "the handoff on the server",
   );
   expect(sent.status).toBe("pending");
+  expect(sent.from.repoId).toBe("github.com/acme/shop");
+  expect(sent.to.repoId).toBe("github.com/acme/speech");
 
-  // On alice's machine, alice opens the confirm page on her own 127.0.0.1 and accepts.
-  const answer = nodeOnMachine("alice", acceptScript(sent.id));
-  expect(JSON.parse(answer)).toMatchObject({ ok: true });
-  onMachine("alice", `test -f /work/shop/.baton/handoffs/${sent.id}.md`);
+  // The sender's browser isn't paired with grace's machine: it can look, not answer.
+  await page.goto(`/handoffs/${sent.id}`);
+  await expect(page.getByRole("heading", { name: "Waiting for the receiver" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept" })).toHaveCount(0);
+
+  // Grace pairs her own browser with her machine, using the link `baton pair` prints there.
+  const link = pairLink("grace");
+  const graces = await browser.newContext({ baseURL: BASE });
+  const grace = await graces.newPage();
+  await signIn(grace);
+  await grace.goto(link);
+  await expect(grace.getByRole("heading", { name: "Paired with grace" })).toBeVisible();
+  // The code is single use: a second visit is refused.
+  const again = await (await browser.newContext({ baseURL: BASE })).newPage();
+  await signIn(again);
+  await again.goto(link);
+  await expect(again.getByText("already used or has expired")).toBeVisible();
+
+  // Grace reviews it on the team website and accepts.
+  await grace.goto(`/handoffs/${sent.id}`);
+  await expect(grace.getByText("e2e").first()).toBeVisible();
+  await grace.screenshot({ path: "test-results/handoff-accept-page.png", fullPage: true });
+  await grace.getByRole("button", { name: "Accept" }).click();
+  await expect(grace.getByRole("heading", { name: "Saved on grace" })).toBeVisible();
+  await expect(grace.getByText(`/work/speech/.baton/handoffs/${sent.id}.md`)).toBeVisible();
+  await expect(
+    grace.getByText(`cd /work/speech && codex "Read .baton/handoffs/${sent.id}.md`),
+  ).toBeVisible();
+  await grace.screenshot({ path: "test-results/handoff-accepted-page.png", fullPage: true });
+
+  // Grace's daemon wrote it into her own checkout, a different repo from bob's.
+  onMachine("grace", `test -f /work/speech/.baton/handoffs/${sent.id}.md`);
+  expect(onMachine("grace", "git -C /work/speech status --porcelain")).toBe("");
 
   // The sender's viewer hears back.
   await expect
     .poll(async () => (await handoffs()).find((h) => h.id === sent.id)?.status)
     .toBe("accepted");
+  await page.goto("/");
   const tray = page.locator(".handoff-tray");
   if (await tray.evaluate((el) => el.classList.contains("is-closed"))) {
     await tray.locator(".handoff-tray-head").click();
   }
   await expect(tray.locator(".handoff-status.is-accepted").first()).toBeVisible();
+  await graces.close();
 });
 
 test("a dropped daemon reconnects and its session carries on, exactly once", async ({ page }) => {
@@ -183,32 +217,14 @@ test("a dropped daemon reconnects and its session carries on, exactly once", asy
   await expect(row).toContainText(`${want} events`);
 });
 
-/** What alice's confirm page does when she presses Accept, run on her machine. */
-function acceptScript(id: string): string {
-  return `
-import http from "node:http";
-const ID = ${JSON.stringify(id)};
-const call = (method, path, body) => new Promise((resolve, reject) => {
-  const data = body === undefined ? undefined : JSON.stringify(body);
-  const req = http.request({ host: "127.0.0.1", port: 7777, path, method, headers: data ? {
-    "content-type": "application/json", "content-length": Buffer.byteLength(data),
-    origin: "http://127.0.0.1:7777" } : {} }, (res) => {
-    let text = ""; res.on("data", (d) => (text += d)); res.on("end", () => resolve(text));
-  });
-  req.on("error", reject);
-  req.end(data);
-});
-let page = "";
-for (let i = 0; i < 60 && !page.includes("const TOKEN="); i++) {
-  page = await call("GET", "/inbox/" + ID);
-  if (!page.includes("const TOKEN=")) await new Promise((r) => setTimeout(r, 500));
-}
-const token = JSON.parse(page.match(/const TOKEN=("(?:[^"\\\\]|\\\\.)*")/)[1]);
-let answer = JSON.parse(await call("POST", "/inbox/" + ID + "/accept", { token }));
-// The page asks where the checkout is when it can't tell; alice types it in.
-if (answer.needFolder) {
-  answer = JSON.parse(await call("POST", "/inbox/" + ID + "/accept", { token, folder: "/work/shop" }));
-}
-process.stdout.write(JSON.stringify(answer));
-`;
+/** Runs `baton pair` on `machine` and returns its link, pointed at the server as seen from here. */
+function pairLink(machine: Machine): string {
+  const out = onMachine(
+    machine,
+    `cd /app && node packages/daemon/dist/index.js pair --server "$BATON_SERVER" --name ${machine} --state-file /data/state.json`,
+  );
+  const url = out.match(/https?:\/\/\S+\/pair#\S+/)?.[0];
+  if (!url) throw new Error(`no pairing link in: ${out}`);
+  const link = new URL(url);
+  return `${BASE}/pair${link.hash}`;
 }

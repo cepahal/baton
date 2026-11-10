@@ -2153,3 +2153,225 @@ button.scard-grip {
 .report-link {
   color: var(--ink-soft, #5d6a82);
 }
+
+/* ---- Standalone pages: /handoffs/:id and /pair ---- */
+
+.handoff-options label.handoff-check {
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.handoff-item.is-hint {
+  background: none;
+  box-shadow: none;
+  padding: 4px 4px 0;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 32px 16px 64px;
+  color: var(--ink);
+  font-family: var(--font);
+}
+
+.page-head,
+.page-body {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.page-head h1 {
+  margin: 8px 0 4px;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+}
+
+.page-home {
+  color: var(--ink-faint);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.page-home:hover {
+  color: var(--aqua-deep);
+}
+
+.page-route {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+
+.page-route .handoff-status {
+  margin-left: auto;
+}
+
+.page-card {
+  margin: 16px 0;
+  padding: 18px 22px;
+  border-radius: var(--radius-lg);
+  background: var(--gloss), var(--clay);
+  box-shadow: var(--clay-shadow);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.page-card.is-answer {
+  box-shadow:
+    var(--clay-shadow),
+    inset 4px 0 0 var(--prompt-edge);
+}
+
+.page-card h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.page-card h3 {
+  margin: 16px 0 6px;
+  font-size: 14px;
+}
+
+.page .page-card code {
+  overflow-wrap: anywhere;
+}
+
+.handoff-preview {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--clay-2);
+  box-shadow: var(--clay-pressed);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.page-files {
+  max-height: 200px;
+  overflow: auto;
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.page-faint {
+  color: var(--ink-faint);
+}
+
+.page-error {
+  color: #b3283c;
+  font-weight: 600;
+}
+
+.page-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.page-field input,
+.page-field textarea {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--clay-2);
+  box-shadow: var(--clay-pressed);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 400;
+}
+
+.page-field textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.page-field input:focus,
+.page-field textarea:focus {
+  outline: none;
+  box-shadow:
+    var(--clay-pressed),
+    0 0 0 2px rgba(255, 138, 43, 0.45);
+}
+
+.page-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.page button {
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--gloss), var(--clay);
+  box-shadow: var(--clay-shadow-sm);
+  color: var(--ink-soft);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.page button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.page button.primary {
+  background: var(--gloss), linear-gradient(180deg, #ffab5e, var(--aqua-deep));
+  box-shadow:
+    0 6px 16px rgba(217, 98, 10, 0.35),
+    inset 0 -2px 4px rgba(120, 50, 0, 0.25);
+  color: #fff;
+}
+
+.page button.danger {
+  background: var(--gloss), linear-gradient(180deg, #f08a99, #c94159);
+  color: #fff;
+}
+
+.page-copy {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.page-copy pre,
+.page-pair pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--clay-2);
+  box-shadow: var(--clay-pressed);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.page-copy button {
+  flex: none;
+}
+
+@media (max-width: 600px) {
+  .page-copy {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

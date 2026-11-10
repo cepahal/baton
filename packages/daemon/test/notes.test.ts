@@ -27,16 +27,6 @@ const send = (method: string, body: unknown) => ({
   body: JSON.stringify(body),
 });
 
-/** Headers the confirm page's own fetches carry. */
-const fromPage = (url: string, body: unknown) => ({
-  ...send("POST", body),
-  headers: {
-    "content-type": "application/json",
-    origin: new URL(url).origin,
-    "sec-fetch-site": "same-origin",
-  },
-});
-
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 
@@ -60,7 +50,7 @@ async function start(): Promise<Daemon> {
     codexDir: dirs.codexDir,
     stateFile: dirs.stateFile,
   });
-  const daemon = await startDaemon(config, silent, { notify: undefined, launch: vi.fn() });
+  const daemon = await startDaemon(config, silent, { notify: undefined });
   cleanups.push(() => daemon.close());
   return daemon;
 }
@@ -276,9 +266,8 @@ describe("handing off a sticky note", () => {
 
     const folder = await mkdtemp(join(tmpdir(), "baton-note-"));
     cleanups.push(() => rm(folder, { recursive: true, force: true }));
-    const offer = d.handoffs.inbox.offer(h.id);
-    const url = `${d.url}/inbox/${h.id}/accept`;
-    const ok = await fetch(url, fromPage(url, { token: offer?.token, folder }));
+    const url = `${d.url}/handoffs/${h.id}/accept`;
+    const ok = await fetch(url, send("POST", { folder }));
     expect(ok.status).toBe(200);
     const dir = join(folder, ".baton", "handoffs");
     const written = await readFile(join(dir, `${h.id}.md`), "utf8");

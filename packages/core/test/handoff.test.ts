@@ -5,11 +5,13 @@ import {
   HANDOFF_GOAL_MAX,
   HANDOFF_SNIPPET_MAX_BYTES,
   type HandoffHeader,
+  handoffCommand,
   handoffFilePath,
   handoffPrompt,
   heuristicSummary,
   renderHandoff,
   SUMMARIZER_INPUT_MAX_BYTES,
+  shellFolder,
   summarizerInput,
 } from "../src/handoff/packet.js";
 import { HANDOFF_MARKDOWN_MAX, Handoff, HandoffCreate, HandoffId } from "../src/handoff/schema.js";
@@ -75,7 +77,7 @@ describe("full handoff packet", () => {
     ),
   ];
 
-  it("is text only: no code or decline note on the wire", () => {
+  it("carries code metadata and a decline note, but never the patch itself", () => {
     const at = "2026-11-02T10:00:00.000Z";
     const h = Handoff.parse({
       id: "h0123456789",
@@ -85,13 +87,14 @@ describe("full handoff packet", () => {
       from: header.from,
       to: header.to,
       markdown: "# hi",
-      code: { state: "attached" },
+      code: { state: "attached", sha256: "a".repeat(64), files: ["a.ts"], patch: "diff --git" },
       note: "nope",
       createdAt: at,
       updatedAt: at,
     });
-    expect(h).not.toHaveProperty("code");
-    expect(h).not.toHaveProperty("note");
+    expect(h.code).toEqual({ state: "attached", sha256: "a".repeat(64), files: ["a.ts"] });
+    expect(h.note).toBe("nope");
+    expect(() => Handoff.parse({ ...h, note: "x".repeat(501) })).toThrow();
   });
 
   it("fills every template section from the transcript, in order", () => {
@@ -236,5 +239,33 @@ describe("file paths and validation", () => {
       }).success,
     ).toBe(false);
     expect(Handoff.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("the command a receiver runs", () => {
+  it("leaves plain folders alone", () => {
+    expect(shellFolder("/work/shop")).toBe("/work/shop");
+    expect(shellFolder(String.raw`C:\work\shop`)).toBe(String.raw`C:\work\shop`);
+  });
+
+  it("quotes a Windows folder without escaping, and never ends it in a backslash", () => {
+    expect(shellFolder(String.raw`C:\My Repo\ `.trim())).toBe(String.raw`"C:\My Repo"`);
+    expect(shellFolder(String.raw`C:\My Repo`)).toBe(String.raw`"C:\My Repo"`);
+    expect(shellFolder(String.raw`\\server\team share\ `.trim())).toBe(
+      String.raw`"\\server\team share"`,
+    );
+    expect(handoffCommand("claude-code", String.raw`C:\My Repo\ `.trim(), "go")).toBe(
+      String.raw`cd "C:\My Repo" && claude "go"`,
+    );
+  });
+
+  it("escapes everything sh would interpret in a POSIX folder", () => {
+    expect(shellFolder("/tmp/my repo")).toBe('"/tmp/my repo"');
+    const bs = "\\";
+    const bt = "`";
+    const folder = `/tmp/a "b" $HOME ${bt}id${bt} c${bs}`;
+    expect(shellFolder(folder)).toBe(
+      `"/tmp/a ${bs}"b${bs}" ${bs}$HOME ${bs}${bt}id${bs}${bt} c${bs}${bs}"`,
+    );
   });
 });

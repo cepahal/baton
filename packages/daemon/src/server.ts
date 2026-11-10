@@ -17,6 +17,7 @@ import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify, {
   type FastifyInstance,
+  type FastifyReply,
   type FastifyRequest,
   LogController,
   type RawReplyDefaultExpression,
@@ -32,13 +33,14 @@ import {
   secretsMatch,
   sessionCookieHeader,
 } from "./auth.js";
-import type { IngestRoute } from "./handoff-route.js";
-import { registerHandoffRoutes, registerInboxRoutes } from "./handoff-routes.js";
-import type { HandoffRoute, HandoffService } from "./handoff-service.js";
+import type { HandoffRoute, IngestRoute } from "./handoff-route.js";
+import { registerHandoffRoutes, wantsPage } from "./handoff-routes.js";
+import type { Asker, HandoffService } from "./handoff-service.js";
 import type { Hub } from "./hub.js";
-import type { Inbox } from "./inbox.js";
 import { LOGIN_PAGE } from "./login-page.js";
 import { type NoteRouteOptions, registerNoteRoutes } from "./note-routes.js";
+import { pairingOf, registerLocalMe, registerPairingRoutes } from "./pairing-routes.js";
+import type { PairingStore } from "./pairing-store.js";
 import { registerReportRoute } from "./report-page.js";
 
 /** Close code for a request the server refuses (RFC 6455 "policy violation"). */
@@ -89,8 +91,8 @@ export type ServerOptions = {
   handoffs?: HandoffService;
   /** Team server: where `/ingest` connections register so handoffs reach their daemon. */
   ingestRoute?: IngestRoute;
-  /** This machine's handoff inbox (`/inbox`). Never on a team server. */
-  inbox?: Inbox;
+  /** Team server: which browsers are paired with which machines (`/pair`, `/me`). */
+  pairings?: PairingStore;
   /** Sticky notes' files (`/notes`, `/blobs`). Without it there are no notes routes. */
   notes?: Omit<NoteRouteOptions, "hub">;
   /** The "Report issue" page (`/report`). Never on a team server: logs stay on their machine. */
@@ -111,6 +113,7 @@ const API_PATHS = new Set([
   "/canvas",
   "/notes",
   "/whoami",
+  "/me",
 ]);
 /** Prefixes whose subpaths also answer with data. */
 const API_PREFIXES = ["/notes/", "/blobs/", "/handoffs/", "/canvas/", "/sessions/"];
@@ -178,8 +181,11 @@ export async function createServer(hub: Hub, logger: Logger, options: ServerOpti
         isAuthorized(req.headers, team.token) &&
         (!daemonOnly || bearerToken(req.headers.authorization) !== undefined);
       if (authorized) return;
-      if (req.method === "GET" && !isApiPath(url.pathname) && !req.headers.upgrade) {
-        return reply.redirect("/login");
+      const page = !isApiPath(url.pathname) || wantsPage(req);
+      if (req.method === "GET" && page && !req.headers.upgrade) {
+        // Back to this page after logging in (the browser keeps a `#fragment` across redirects).
+        const next = url.pathname === "/" ? "" : `?next=${encodeURIComponent(url.pathname)}`;
+        return reply.redirect(`/login${next}`);
       }
       return reply.code(401).send({ error: "missing or wrong team token" });
     });
@@ -290,10 +296,28 @@ export async function createServer(hub: Hub, logger: Logger, options: ServerOpti
 
   app.get("/health", async () => ({ ok: true, epoch: hub.epoch, seq: hub.seq }));
 
-  if (options.handoffs) registerHandoffRoutes(app, options.handoffs);
+  // A browser opening `/handoffs/:id` or `/pair` gets the viewer, which routes on the path.
+  const webDir = options.webDir;
+  const page =
+    webDir === undefined ? undefined : (reply: FastifyReply) => reply.sendFile("index.html");
+  const pairings = options.pairings;
+  const asker = (req: FastifyRequest): Asker =>
+    team ? { local: false, pairing: pairings ? pairingOf(req, pairings) : null } : { local: true };
+  if (options.handoffs) {
+    registerHandoffRoutes(app, options.handoffs, { asker, ...(page ? { page } : {}) });
+  }
+  if (team && pairings) {
+    const route = options.ingestRoute;
+    registerPairingRoutes(app, {
+      pairings,
+      token: team.token,
+      connected: (name, machine) => route?.machineOf(name) === machine,
+      ...(page ? { page } : {}),
+    });
+  } else if (!team) {
+    registerLocalMe(app);
+  }
   if (options.notes) registerNoteRoutes(app, { hub, ...options.notes });
-  // Confirm pages act on this machine, so a server reachable from elsewhere never has them.
-  if (options.inbox && !team) registerInboxRoutes(app, options.inbox);
   if (options.report && !team) registerReportRoute(app, options.report);
 
   if (options.webDir === undefined) {
@@ -382,9 +406,9 @@ function registerIngest(app: TeamApp, hub: Hub, logger: Logger, options: ServerO
         socket.close(CLOSE_POLICY, "invalid message");
         return;
       }
-      if (msg.type === "handoff_status") {
-        // Answers about handoffs; the service checks this daemon is the one asked.
-        options.handoffs?.fromDaemon(source, msg);
+      if (msg.type === "handoff_written" || msg.type === "handoff_code") {
+        // Answers to the server's requests; the route checks this daemon is the one asked.
+        options.ingestRoute?.answer(source, socket, msg);
         return;
       }
       const accepted = hub.accept(msg.events, {

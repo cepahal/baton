@@ -2,6 +2,9 @@ import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { BATON_VERSION } from "@baton/core";
 import { type DoctorInput, formatChecks, runDoctor } from "./doctor.js";
+import { runHandoffApply, runHandoffStart } from "./handoff-commands.js";
+import { loadMachineId } from "./machine-id.js";
+import { requestPairLink } from "./pair-client.js";
 import { lookupRepo } from "./repo-info.js";
 import { buildReport, ISSUES_URL } from "./report.js";
 import { EMPTY_SHARING, isInside, readSharing, type Sharing, writeSharing } from "./sharing.js";
@@ -12,13 +15,41 @@ export type LocalAction =
   | { kind: "sharing" | "pause" | "resume"; sharingFile: string }
   | { kind: "doctor"; input: DoctorInput }
   | { kind: "report"; logFile: string; token?: string | undefined }
-  | { kind: "version" };
+  | { kind: "version" }
+  | { kind: "handoff-apply" | "handoff-start"; dir: string; id: string }
+  | { kind: "pair"; server: string; token: string; name: string; machineFile: string };
 
 type Out = { write(text: string): void };
 
 /** Runs a local command; resolves its exit code. */
-export async function runLocal(action: LocalAction, out: Out = process.stdout): Promise<number> {
+export async function runLocal(
+  action: LocalAction,
+  out: Out = process.stdout,
+  err: Out = process.stderr,
+): Promise<number> {
   switch (action.kind) {
+    case "handoff-apply":
+      return runHandoffApply(action, out, err);
+    case "handoff-start":
+      return runHandoffStart(action, err);
+    case "pair": {
+      const machine = await loadMachineId(action.machineFile);
+      const result = await requestPairLink({ ...action, machine });
+      if (!result.ok) {
+        err.write(`baton: ${result.error}
+`);
+        return 1;
+      }
+      // The link is a one-time secret: shown to this user only, never logged.
+      out.write(
+        `Open this link in a browser signed in to the team server to pair it with ${action.name}
+(single use, expires ${result.link.expiresAt}):
+
+  ${result.link.url}
+`,
+      );
+      return 0;
+    }
     case "version":
       out.write(`baton ${BATON_VERSION}\n`);
       return 0;

@@ -5,8 +5,11 @@ import type {
   RawServerDefault,
 } from "fastify";
 import type { Logger } from "pino";
-import { PAGE_CSP } from "./inbox-page.js";
 import { buildReport, ISSUES_URL } from "./report.js";
+
+/** The report page is static HTML with inline script and style, and nothing else. */
+export const PAGE_CSP =
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 type BatonApp = FastifyInstance<
   RawServerDefault,

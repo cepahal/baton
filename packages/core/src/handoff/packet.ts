@@ -191,7 +191,44 @@ export function handoffFilePath(id: string): string {
   return `.baton/handoffs/${id}.md`;
 }
 
-/** The prompt "Copy prompt" and "Start new session" use. Only fixed text and the path. */
-export function handoffPrompt(id: string): string {
-  return `Read ${handoffFilePath(id)} and continue the work it describes.`;
+/** Where the sender's patch is written, next to the markdown. */
+export function handoffPatchPath(id: string): string {
+  return `.baton/handoffs/${id}/changes.patch`;
+}
+
+/**
+ * The prompt the receiver starts their agent with. Only fixed text and paths,
+ * so it is safe to paste into a shell command.
+ */
+export function handoffPrompt(id: string, withPatch = false): string {
+  const read = `Read ${handoffFilePath(id)} and continue the work it describes.`;
+  if (!withPatch) return read;
+  return `${read} The sender's changes are in ${handoffPatchPath(id)}; adapt them to this codebase.`;
+}
+
+/** `C:\…`, `C:/…` or `\\server\share\…`: a folder on a Windows machine. */
+const isWindowsPath = (folder: string): boolean => /^(?:[A-Za-z]:[\\/]|\\\\)/.test(folder);
+
+/**
+ * A folder for a shell command line: quoted when it holds anything but plain
+ * characters, for the shell the receiving machine uses.
+ *
+ * - POSIX folders are double-quoted with `\`, `"`, `$` and `` ` `` escaped, so
+ *   `sh` reads back exactly the folder.
+ * - Windows folders go to cmd or PowerShell, where `\` is a path separator, not
+ *   an escape, so nothing is escaped (`"` can't occur in a Windows name). A
+ *   trailing `\` is dropped: `cd` doesn't need it, and before the closing
+ *   quote it would read as an escaped quote in a POSIX-style shell.
+ */
+export function shellFolder(folder: string): string {
+  if (/^[\w@%+=:,./\\-]+$/.test(folder)) return folder;
+  if (isWindowsPath(folder)) {
+    return `"${folder.replace(/\\+$/, "")}"`;
+  }
+  return `"${folder.replace(/(["$`\\])/g, "\\$1")}"`;
+}
+
+/** `cd <folder> && claude "<prompt>"`: what the receiver runs to pick the work up. */
+export function handoffCommand(agent: string, folder: string, prompt: string): string {
+  return `cd ${shellFolder(folder)} && ${agent === "codex" ? "codex" : "claude"} "${prompt}"`;
 }

@@ -18,6 +18,9 @@ export const HandoffRecord = z.object({
   fromDaemon: z.string().optional(),
   /** Daemon running the receiving session (team server); absent locally. */
   toDaemon: z.string().optional(),
+  /** Machine ids of those daemons when the handoff was made: pairing checks use them. */
+  fromMachine: z.string().optional(),
+  toMachine: z.string().optional(),
 });
 export type HandoffRecord = z.infer<typeof HandoffRecord>;
 

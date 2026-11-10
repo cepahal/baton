@@ -11,6 +11,7 @@ import { HandoffStore } from "./handoff-store.js";
 import { Hub } from "./hub.js";
 import { modelsFor } from "./models.js";
 import { NoteStore } from "./note-store.js";
+import { PairingStore } from "./pairing-store.js";
 import { RemovedSessions } from "./removed-sessions.js";
 import { createServer } from "./server.js";
 
@@ -33,6 +34,8 @@ export async function startTeamServer(
   options: {
     canvasFile?: string;
     handoffsFile?: string;
+    /** Which browsers are paired with which machines. */
+    pairingsFile?: string;
     notesFile?: string;
     blobsDir?: string;
     /** Sessions removed from the canvas, so their daemons' resends are dropped. */
@@ -86,6 +89,11 @@ export async function startTeamServer(
     logger: handoffLogger,
   });
   await store.load();
+  const pairings = new PairingStore({
+    ...(options.pairingsFile === undefined ? {} : { file: options.pairingsFile }),
+    logger: handoffLogger,
+  });
+  await pairings.load();
   const ingestRoute = new IngestRoute();
   const handoffs = new HandoffService({
     hub,
@@ -93,6 +101,7 @@ export async function startTeamServer(
     route: ingestRoute,
     logger: handoffLogger,
     summarize,
+    blobs,
   });
   const serverLogger = logger.child({ component: "server" });
   const webDir = await viewerDir(config.webDir, serverLogger);
@@ -101,10 +110,17 @@ export async function startTeamServer(
     access: { kind: "team", token: config.token },
     handoffs,
     ingestRoute,
+    pairings,
     notes: { blobs, blobsInUse: () => handoffs.attachmentsInUse() },
   });
   await server.listen({ host: config.host, port: config.port });
-  const files = [options.canvasFile, options.handoffsFile, options.notesFile, options.removedFile];
+  const files = [
+    options.canvasFile,
+    options.handoffsFile,
+    options.notesFile,
+    options.removedFile,
+    options.pairingsFile,
+  ];
   const backups =
     options.backupDir === undefined || options.blobsDir === undefined
       ? undefined
@@ -118,6 +134,7 @@ export async function startTeamServer(
             await notes.flush();
             await store.flush();
             await removed.flush();
+            await pairings.flush();
           },
         });
   const address = server.server.address();
@@ -136,6 +153,7 @@ export async function startTeamServer(
       await notes.flush();
       await store.flush();
       await removed.flush();
+      await pairings.flush();
     },
   };
 }

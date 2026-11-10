@@ -59,7 +59,8 @@ services:
     environment: { <<: *machine-env, NAME: frank, FIXTURE: long-build.jsonl }
   grace:
     <<: *machine
-    environment: { <<: *machine-env, NAME: grace, FIXTURE: codex/speech-tool.rollout.jsonl }
+    environment:
+      { <<: *machine-env, NAME: grace, FIXTURE: codex/speech-tool.rollout.jsonl, REPO: speech }
   heidi:
     <<: *machine
     environment: { <<: *machine-env, NAME: heidi, FIXTURE: codex/forked-frontend.rollout.jsonl }

@@ -120,6 +120,9 @@ Open `http://<server-name>:7777/` and sign in with the team token.
 | `baton doctor --server <url>`  | Check Node, git, agent folders, sharing, the server, the token, clock skew |
 | `baton report`                 | Version info and the last 200 log lines, redacted, for a bug report        |
 | `baton start` (no `--server`)  | A private viewer on `http://127.0.0.1:7777/` for this machine only         |
+| `baton pair --server <url>`    | Print a one-time link that pairs a browser with this machine (10 minutes)  |
+| `baton handoff apply <id>`     | Apply an accepted handoff's `changes.patch` on a new branch                |
+| `baton handoff start <id>`     | Start Claude Code / Codex here with an accepted handoff's prompt           |
 
 `--name` defaults to your OS username. If two teammates have the same one, the
 second is refused with a message asking for `--name`.
@@ -127,6 +130,31 @@ second is refused with a message asking for `--name`.
 To remove a session from the shared canvas for everyone (say you shared
 something by mistake), open it and press 🗑 → **Delete for everyone**. Then
 `baton unshare` the repo, or it will keep sending new activity.
+
+## Handoffs
+
+Drag one session onto another (or a sticky note onto a session) to hand work
+over; it works between any two sessions, in any repos. The receiver gets a
+notification linking to the handoff's page on the team server, and accepts
+or declines it there. Only a browser **paired with the receiving machine**
+can answer: `baton start --server` prints and opens a pairing link when it
+connects (or run `baton pair --server <url>`).
+
+Accepting writes `.baton/handoffs/<id>.md` (and the sender's
+`changes.patch`, if they attached code) into the receiving session's folder,
+or one you name. The page then shows the prompt and the exact command to
+continue, e.g. `cd <folder> && claude "Read .baton/handoffs/<id>.md and
+continue the work it describes."`. If the folder is a checkout of the same
+repo with the sender's base commit, `baton handoff apply <id>` puts the
+changes on a new branch.
+
+Notifications: Windows shows a toast you can click; Linux puts the link in the
+`notify-send` text; macOS clicks open the page only with
+[`terminal-notifier`](https://github.com/julienXX/terminal-notifier)
+installed (`brew install terminal-notifier`), otherwise the banner just says
+"Open Baton to review". Set `BATON_NOTIFY=open` to open the page in your
+browser instead, or `BATON_NOTIFY=off` for nothing. Details:
+[docs/handoff.md](docs/handoff.md).
 
 ## Updating
 

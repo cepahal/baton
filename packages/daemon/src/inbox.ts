@@ -1,22 +1,21 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
 import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, join, posix, resolve, win32 } from "node:path";
+import { isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import {
   type Handoff,
+  type HandoffApply,
   type HandoffOfferMessage,
-  type HandoffStatusMessage,
+  type HandoffWriteResult,
   handoffFilePath,
-  handoffPrompt,
+  handoffPatchPath,
   type RepoInfo,
   safeFileName,
 } from "@baton/core";
 import type { Logger } from "pino";
-import { z } from "zod";
 import { type GitExec, gitExec } from "./git-exec.js";
+import { HandoffMeta } from "./handoff-meta.js";
 import type { Notifier } from "./notify.js";
 import { lookupRepo } from "./repo-info.js";
 import { repoRoot } from "./session-domains.js";
-import { type Launcher, type TerminalCommand, terminalCommand } from "./terminal.js";
 
 /** Offers kept; beyond it the oldest go. */
 const MAX_ITEMS = 200;
@@ -45,230 +44,130 @@ export const lookupFolder: FolderLookup = async (dir) => {
 };
 
 export type InboxOptions = {
-  /** Sends an answer back: to the local handoff service, or up the team connection. */
-  report: (message: HandoffStatusMessage) => void;
-  /** This daemon's own origin, e.g. `http://127.0.0.1:7777`, for notification links. */
+  /** Where handoff pages live (the team server, or this daemon on `baton start`), for notification links. */
   origin: () => string;
   logger: Logger;
   notify?: Notifier | undefined;
   lookup?: FolderLookup;
   git?: GitExec;
-  launch?: Launcher | undefined;
   platform?: NodeJS.Platform;
-  hasWindowsTerminal?: () => Promise<boolean>;
-  /** Remembers the folder chosen per repoId. */
-  foldersFile?: string | undefined;
-  newToken?: () => string;
-  /** Fetches a sticky note's file by id, for handoffs with attachments. */
-  fetchBlob?: ((sha256: string) => Promise<Uint8Array | undefined>) | undefined;
+  /** The working directory of one of this machine's sessions, if it is known here. */
+  sessionDir?: (sessionId: string) => string | undefined;
+  /** Reads a note file or patch from the hub. */
+  fetchBlob?: (sha256: string) => Promise<Uint8Array | undefined>;
 };
-
-export type InboxOffer = {
-  handoff: Handoff;
-  /** The receiving session's cwd, from the server: only a hint, always re-checked here. */
-  dir?: string;
-  token: string;
-  /** What this machine decided; the server's copy lags until it hears back. */
-  local: "pending" | "accepted" | "declined";
-  checkout?: string;
-  written?: string;
-  started?: boolean;
-};
-
-export type ActionResult<T extends object = object> =
-  | ({ ok: true } & T)
-  | { ok: false; status: number; error: string; needFolder?: boolean };
-
-const Folders = z.record(z.string(), z.string());
 
 /**
- * The receiving machine's side of handoffs. Messages from the
- * server are only stored and announced; every action on this machine runs
- * from a method that needs the item's token, which only the localhost
- * confirm page holds. Nothing here acts on a message by itself.
+ * A daemon's handoff inbox: the pending handoffs addressed to this machine's
+ * sessions. It notifies the user about new ones, and on `write` (Accept in a
+ * browser paired to this machine) writes one into a folder. That is all it
+ * does: it never runs the receiver's agent, a terminal, or `git apply`.
  */
 export class Inbox {
-  readonly #offers = new Map<string, InboxOffer>();
-  #folders: Record<string, string> | undefined;
+  readonly #offers = new Map<string, Handoff>();
 
   constructor(readonly options: InboxOptions) {}
 
-  /** A message from the server: stored and announced, nothing more. */
+  /**
+   * The hub's latest copy of a handoff. A new pending one is stored and
+   * announced; one that is no longer pending is forgotten.
+   */
   receive(message: HandoffOfferMessage): void {
-    const id = message.handoff.id;
-    const prev = this.#offers.get(id);
-    if (prev) {
-      prev.handoff = message.handoff;
-      if (message.dir !== undefined) prev.dir = message.dir;
-      // The server still thinks it's pending, so our answer was lost: resend it.
-      if (message.handoff.status === "pending" && prev.local !== "pending") {
-        this.options.report({ type: "handoff_status", id, status: prev.local });
-      }
+    const handoff = message.handoff;
+    if (handoff.status !== "pending") {
+      this.#offers.delete(handoff.id);
       return;
     }
-    if (message.handoff.status !== "pending") return;
-    this.#offers.set(id, {
-      handoff: message.handoff,
-      ...(message.dir === undefined ? {} : { dir: message.dir }),
-      token: this.#token(),
-      local: "pending",
-    });
+    const known = this.#offers.has(handoff.id);
+    this.#offers.set(handoff.id, handoff);
     trim(this.#offers);
+    if (known) return;
+    const kind = KIND_NAMES[handoff.kind];
     this.#announce(
-      `Handoff from ${message.handoff.sender}`,
-      `A ${{ full: "session handoff", chat: "whole chat", snippet: "snippet", note: "sticky note" }[message.handoff.kind]} for your ${agentName(message.handoff.to.agent)} session. Open to review it.`,
-      `/inbox/${id}`,
+      `Handoff from ${handoff.sender}`,
+      `A ${kind} for your ${agentName(handoff.to.agent)} session.`,
+      `/handoffs/${handoff.id}`,
     );
   }
 
-  offer(id: string): InboxOffer | undefined {
+  /** A pending handoff for this machine, by id. */
+  offer(id: string): Handoff | undefined {
     return this.#offers.get(id);
   }
 
-  /** What the local viewer may show: no tokens. */
-  list(): { id: string; sender: string; kind: string; status: string; url: string }[] {
-    return [...this.#offers.values()].reverse().map((o) => ({
-      id: o.handoff.id,
-      sender: o.handoff.sender,
-      kind: o.handoff.kind,
-      status: o.local,
-      url: `/inbox/${o.handoff.id}`,
-    }));
+  /**
+   * Writes a pending handoff into `folder`, or the receiving session's folder
+   * when none is given: the markdown, its note files, the sender's patch and a
+   * `handoff.json` for `baton handoff apply`/`start`. `.baton/` is kept out of
+   * `git status`. The folder only has to exist; any repo, or none, will do.
+   */
+  async write(id: string, folder?: string): Promise<HandoffWriteResult> {
+    const handoff = this.#offers.get(id);
+    if (!handoff) {
+      return { ok: false, error: "This machine has no pending handoff with that id." };
+    }
+    const dest = await this.#destination(handoff, folder);
+    if ("error" in dest) return { ok: false, ...dest };
+    try {
+      const path = await this.#writeFiles(handoff, dest.dir);
+      const apply = await this.#applyCheck(handoff, dest.dir);
+      this.options.logger.info({ id, folder: dest.dir }, "handoff written");
+      return { ok: true, delivery: { folder: dest.dir, path, apply } };
+    } catch (err) {
+      this.options.logger.warn({ err, id }, "could not write a handoff");
+      return { ok: false, error: `Could not write the handoff: ${errorText(err)}` };
+    }
   }
 
-  /** Where the handoff would be written, if this machine already knows. */
-  async checkoutFor(offer: InboxOffer): Promise<string | undefined> {
-    if (offer.checkout) return offer.checkout;
-    const repoId = offer.handoff.from.repoId;
-    const lookup = this.options.lookup ?? lookupFolder;
-    const folders = await this.#loadFolders();
-    for (const candidate of [offer.dir, repoId ? folders[repoId] : undefined]) {
-      if (!candidate || !isAbsolute(candidate)) continue;
-      const found = await lookup(candidate).catch(() => null);
-      if (repoId === null) {
-        // Not a git handoff: the receiving session's folder will do.
-        if (candidate === offer.dir && (await isDir(candidate))) return found?.root ?? candidate;
-        continue;
+  async #destination(
+    handoff: Handoff,
+    folder: string | undefined,
+  ): Promise<{ dir: string } | { error: string; needFolder?: boolean }> {
+    if (folder !== undefined) {
+      const dir = cleanFolder(folder, this.#platform);
+      const pathApi = this.#platform === "win32" ? win32 : posix;
+      if (dir === "" || !pathApi.isAbsolute(dir)) {
+        return {
+          error: "Give the full path of a folder on the receiving machine.",
+          needFolder: true,
+        };
       }
-      if (found && found.repoId === repoId) return found.root;
+      if (!(await isDir(dir))) {
+        return { error: `${dir} is not a folder on the receiving machine.`, needFolder: true };
+      }
+      return { dir: resolve(dir) };
     }
-    return undefined;
+    const dir = this.options.sessionDir?.(handoff.to.sessionId);
+    if (dir !== undefined && (await isDir(dir))) return { dir };
+    return {
+      error: "This machine doesn't know the receiving session's folder. Choose one.",
+      needFolder: true,
+    };
   }
 
-  /** Accept: writes the handoff file into the checkout and tells the server. */
-  async accept(
-    id: string,
-    token: string,
-    folder?: string,
-  ): Promise<ActionResult<{ path: string; prompt: string; checkout: string }>> {
-    const offer = this.#offers.get(id);
-    if (!offer || !tokenMatches(offer.token, token)) return FORBIDDEN;
-    if (offer.local === "declined") return { ok: false, status: 409, error: "already declined" };
-    let checkout = offer.checkout;
-    if (!checkout && folder !== undefined) {
-      const chosen = await this.#useFolder(offer, folder);
-      if (!chosen.ok) return chosen;
-      checkout = chosen.root;
-    }
-    checkout ??= await this.checkoutFor(offer);
-    if (!checkout) {
-      return {
-        ok: false,
-        status: 409,
-        error: offer.handoff.from.repoId
-          ? `Where is your checkout of ${offer.handoff.from.repoId}?`
-          : "Which folder should the handoff go in?",
-        needFolder: true,
-      };
-    }
-    offer.checkout = checkout;
-    try {
-      offer.written = await this.#writeFile(offer);
-    } catch (err) {
-      this.options.logger.warn({ err, id }, "could not write the handoff file");
-      return { ok: false, status: 500, error: `could not write the handoff file: ${String(err)}` };
-    }
-    if (offer.local !== "accepted") {
-      offer.local = "accepted";
-      this.options.report({ type: "handoff_status", id, status: "accepted" });
-    }
-    return { ok: true, path: offer.written, prompt: handoffPrompt(id), checkout };
-  }
-
-  /** Decline: tells the server, nothing more. */
-  async decline(id: string, token: string): Promise<ActionResult> {
-    const offer = this.#offers.get(id);
-    if (!offer || !tokenMatches(offer.token, token)) return FORBIDDEN;
-    if (offer.local !== "pending")
-      return { ok: false, status: 409, error: `already ${offer.local}` };
-    offer.local = "declined";
-    this.options.report({ type: "handoff_status", id, status: "declined" });
-    return { ok: true };
-  }
-
-  /** Opens a terminal in the checkout running the receiving agent on the handoff file. */
-  async start(id: string, token: string): Promise<ActionResult<{ command: TerminalCommand }>> {
-    const offer = this.#offers.get(id);
-    if (!offer || !tokenMatches(offer.token, token)) return FORBIDDEN;
-    if (offer.local !== "accepted" || !offer.checkout) {
-      return { ok: false, status: 409, error: "accept the handoff first" };
-    }
-    const platform = this.options.platform ?? process.platform;
-    const command = terminalCommand({
-      platform,
-      agent: offer.handoff.to.agent,
-      dir: offer.checkout,
-      prompt: handoffPrompt(id),
-      hasWindowsTerminal:
-        platform === "win32" && (await (this.options.hasWindowsTerminal?.() ?? false)),
-    });
-    if ("error" in command) return { ok: false, status: 400, error: command.error };
-    if (!this.options.launch) return { ok: false, status: 501, error: "no terminal launcher" };
-    try {
-      await this.options.launch(command, offer.checkout);
-    } catch (err) {
-      return { ok: false, status: 500, error: `could not open a terminal: ${String(err)}` };
-    }
-    offer.started = true;
-    return { ok: true, command };
-  }
-
-  async #useFolder(
-    offer: InboxOffer,
-    folder: string,
-  ): Promise<
-    { ok: true; root: string } | { ok: false; status: number; error: string; needFolder: true }
-  > {
-    const fail = (error: string) => ({
-      ok: false as const,
-      status: 400,
-      error,
-      needFolder: true as const,
-    });
-    const dir = cleanFolder(folder);
-    if (!isAbsolute(dir)) return fail("give the full path of the folder");
-    if (!(await isDir(dir))) return fail(`${dir} is not a folder`);
-    const repoId = offer.handoff.from.repoId;
-    const found = await (this.options.lookup ?? lookupFolder)(dir).catch(() => null);
-    if (repoId === null) return { ok: true, root: found?.root ?? resolve(dir) };
-    if (!found) return fail(`${dir} is not a git checkout`);
-    if (found.repoId !== repoId) {
-      return fail(`${dir} is a checkout of ${found.repoId ?? "an unknown repo"}, not ${repoId}`);
-    }
-    const folders = await this.#loadFolders();
-    folders[repoId] = found.root;
-    await this.#saveFolders();
-    return { ok: true, root: found.root };
-  }
-
-  async #writeFile(offer: InboxOffer): Promise<string> {
-    const checkout = offer.checkout ?? "";
-    const id = offer.handoff.id;
-    const path = join(checkout, ...handoffFilePath(id).split("/"));
-    await mkdir(join(checkout, ".baton", "handoffs"), { recursive: true });
-    const saved = await this.#writeAttachments(offer, join(checkout, ".baton", "handoffs", id));
-    await writeFile(path, `${offer.handoff.markdown.trimEnd()}\n${saved}`);
-    await this.#excludeFromGit(checkout);
+  async #writeFiles(handoff: Handoff, dir: string): Promise<string> {
+    const id = handoff.id;
+    const path = join(dir, ...handoffFilePath(id).split("/"));
+    const filesDir = join(dir, ".baton", "handoffs", id);
+    await mkdir(join(dir, ".baton", "handoffs"), { recursive: true });
+    const saved = await this.#writeAttachments(handoff, filesDir);
+    const patch = await this.#writePatch(handoff, filesDir);
+    const meta: HandoffMeta = {
+      id,
+      agent: handoff.to.agent,
+      sender: handoff.sender,
+      repoId: handoff.from.repoId,
+      branch: handoff.code?.branch ?? handoff.from.branch,
+      base: handoff.code?.base ?? null,
+      patch: patch !== "",
+    };
+    await mkdir(filesDir, { recursive: true });
+    await writeFile(
+      join(filesDir, "handoff.json"),
+      `${JSON.stringify(HandoffMeta.parse(meta), null, 2)}\n`,
+    );
+    await writeFile(path, `${handoff.markdown.trimEnd()}\n${saved}${patch}`);
+    await this.#excludeFromGit(dir);
     return path;
   }
 
@@ -276,20 +175,17 @@ export class Inbox {
    * Writes a note handoff's files into `.baton/handoffs/<id>/` and returns a
    * markdown section listing where they went (empty without attachments).
    */
-  async #writeAttachments(offer: InboxOffer, dir: string): Promise<string> {
-    const files = offer.handoff.attachments ?? [];
+  async #writeAttachments(handoff: Handoff, dir: string): Promise<string> {
+    const files = handoff.attachments ?? [];
     if (files.length === 0) return "";
     const lines = ["", "## Files saved with this handoff", ""];
-    const used = new Set<string>();
+    const used = new Set<string>(["changes.patch", "handoff.json"]);
     for (const f of files) {
       let name = safeFileName(f.name);
       for (let n = 2; used.has(name.toLowerCase()); n++) name = `${n}-${safeFileName(f.name)}`;
       used.add(name.toLowerCase());
-      const rel = `.baton/handoffs/${offer.handoff.id}/${name}`;
-      const bytes = await this.options.fetchBlob?.(f.sha256).catch((err: unknown) => {
-        this.options.logger.warn({ err, id: offer.handoff.id }, "could not fetch a note file");
-        return undefined;
-      });
+      const rel = `.baton/handoffs/${handoff.id}/${name}`;
+      const bytes = await this.#fetch(f.sha256, handoff.id);
       if (!bytes) {
         lines.push(`- \`${name}\`: _could not be fetched from the hub_`);
         continue;
@@ -301,44 +197,101 @@ export class Inbox {
     return `${lines.join("\n")}\n`;
   }
 
-  /** Keeps `.baton/` out of `git status` without touching tracked files. */
-  async #excludeFromGit(checkout: string): Promise<void> {
+  /** Writes `changes.patch` and returns the markdown section about it (empty without one). */
+  async #writePatch(handoff: Handoff, dir: string): Promise<string> {
+    const code = handoff.code;
+    if (code?.state !== "attached" || code.sha256 === undefined) return "";
+    const bytes = await this.#fetch(code.sha256, handoff.id);
+    const rel = handoffPatchPath(handoff.id);
+    if (!bytes) {
+      return `\n## The sender's changes\n\nThe sender attached a patch, but it could not be fetched from the hub.\n`;
+    }
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "changes.patch"), bytes);
+    const files = code.files ?? [];
+    const lines = [
+      "",
+      "## The sender's changes",
+      "",
+      `The sender's uncommitted changes are in \`${rel}\`${code.base ? `, against commit \`${code.base.slice(0, 12)}\`` : ""}${code.branch ? ` on \`${code.branch}\`` : ""}.`,
+      "This folder may be a different repository or version: read the patch and adapt the changes to this codebase rather than applying it blindly.",
+    ];
+    if (files.length > 0) {
+      lines.push("", "Files in the patch:", "");
+      for (const f of files.slice(0, 50)) lines.push(`- \`${f}\``);
+      if (files.length > 50) lines.push(`- …and ${files.length - 50} more`);
+    }
+    return `${lines.join("\n")}\n`;
+  }
+
+  async #fetch(sha256: string, id: string): Promise<Uint8Array | undefined> {
+    return this.options.fetchBlob?.(sha256).catch((err: unknown) => {
+      this.options.logger.warn({ err, id }, "could not fetch a handoff file");
+      return undefined;
+    });
+  }
+
+  /**
+   * Whether `baton handoff apply` can work here: only in a checkout of the
+   * sender's repo that has the patch's base commit. Otherwise, why not.
+   */
+  async #applyCheck(handoff: Handoff, dir: string): Promise<HandoffApply> {
+    const code = handoff.code;
+    if (code?.state !== "attached") {
+      return { available: false, reason: "The sender didn't attach code changes." };
+    }
+    if (code.base === undefined) {
+      return { available: false, reason: "The patch doesn't say which commit it is against." };
+    }
+    const repo = await (this.options.lookup ?? lookupFolder)(dir);
+    if (repo === null) {
+      return {
+        available: false,
+        reason:
+          "The destination isn't a git checkout. The patch is saved for your agent to adapt by hand.",
+      };
+    }
+    if (handoff.from.repoId === null || repo.repoId !== handoff.from.repoId) {
+      return {
+        available: false,
+        reason:
+          "The destination is a different repository from the sender's. Your agent can adapt changes.patch by hand.",
+      };
+    }
     const git = this.options.git ?? gitExec;
-    const out = await git(checkout, ["rev-parse", "--git-path", "info/exclude"]);
+    const has = await git(repo.root, ["cat-file", "-e", `${code.base}^{commit}`]);
+    if (has.code !== 0) {
+      return {
+        available: false,
+        reason: `The sender's base commit ${code.base.slice(0, 12)} isn't in this checkout. Run git fetch and accept again, or adapt changes.patch by hand.`,
+      };
+    }
+    return { available: true };
+  }
+
+  /** Keeps `.baton/` out of `git status` without touching tracked files. */
+  async #excludeFromGit(dir: string): Promise<void> {
+    const repo = await (this.options.lookup ?? lookupFolder)(dir);
+    if (repo === null) return;
+    const git = this.options.git ?? gitExec;
+    const out = await git(repo.root, ["rev-parse", "--git-path", "info/exclude"]);
     if (out.code !== 0) return;
     const rel = out.stdout.trim();
     if (!rel) return;
-    const file = isAbsolute(rel) ? rel : join(checkout, rel);
+    const file = isAbsolute(rel) ? rel : join(repo.root, rel);
+    const sub = relative(repo.root, dir)
+      .split(/[\\/]+/)
+      .filter(Boolean)
+      .join("/");
+    const line = sub === "" ? "/.baton/" : `/${sub}/.baton/`;
     const current = await readFile(file, "utf8").catch(() => "");
-    if (current.split(/\r?\n/).includes("/.baton/")) return;
+    if (current.split(/\r?\n/).includes(line)) return;
     await mkdir(join(file, ".."), { recursive: true });
-    await appendFile(file, `${current === "" || current.endsWith("\n") ? "" : "\n"}/.baton/\n`);
+    await appendFile(file, `${current === "" || current.endsWith("\n") ? "" : "\n"}${line}\n`);
   }
 
-  async #loadFolders(): Promise<Record<string, string>> {
-    if (this.#folders) return this.#folders;
-    this.#folders = {};
-    const file = this.options.foldersFile;
-    if (file) {
-      try {
-        const parsed = Folders.safeParse(JSON.parse(await readFile(file, "utf8")));
-        if (parsed.success) this.#folders = parsed.data;
-      } catch {
-        // missing or corrupt: start empty
-      }
-    }
-    return this.#folders;
-  }
-
-  async #saveFolders(): Promise<void> {
-    const file = this.options.foldersFile;
-    if (!file || !this.#folders) return;
-    try {
-      await mkdir(join(file, ".."), { recursive: true });
-      await writeFile(file, JSON.stringify(this.#folders, null, 2));
-    } catch (err) {
-      this.options.logger.warn({ err, file }, "could not save repo folders");
-    }
+  get #platform(): NodeJS.Platform {
+    return this.options.platform ?? process.platform;
   }
 
   #announce(title: string, body: string, path: string): void {
@@ -348,19 +301,14 @@ export class Inbox {
       this.options.logger.warn({ err }, "could not show a notification");
     });
   }
-
-  #token(): string {
-    return this.options.newToken?.() ?? randomBytes(24).toString("hex");
-  }
 }
 
-const FORBIDDEN = { ok: false as const, status: 403, error: "unknown handoff or wrong token" };
-
-function tokenMatches(expected: string, given: string): boolean {
-  const a = Buffer.from(expected);
-  const b = Buffer.from(given);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
+const KIND_NAMES: Record<Handoff["kind"], string> = {
+  full: "session handoff",
+  chat: "whole chat",
+  snippet: "snippet",
+  note: "sticky note",
+};
 
 function trim<T>(map: Map<string, T>): void {
   while (map.size > MAX_ITEMS) {
@@ -376,6 +324,10 @@ async function isDir(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 const agentName = (agent: string) => (agent === "codex" ? "Codex" : "Claude Code");

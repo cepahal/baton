@@ -1,6 +1,6 @@
 // pnpm test:e2e — the viewer end to end, in Chromium, against the Docker stack:
 // a team server, three sharing machines (alice and bob in one repo, grace on
-// Codex) and one that shares nothing. Replays run slowly so bob is still
+// Codex in another) and one that shares nothing. Replays run slowly so bob is still
 // streaming when the last test drops his daemon. Tears down unless --keep.
 //
 // Needs Docker, and Playwright's Chromium once: pnpm --filter @baton/e2e exec playwright install chromium

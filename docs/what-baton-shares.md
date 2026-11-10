@@ -114,6 +114,12 @@ only** and are gone when it restarts, apart from what daemons send again.
   (default; stays on the server machine), `anthropic` (session text goes to the
   Anthropic API under the server's `ANTHROPIC_API_KEY`), or `off`. Ask whoever
   runs the server which it uses.
+- **Code with a handoff**, only if you tick _Attach my uncommitted changes_
+  when sending, from a browser paired with your machine. Your daemon then
+  sends a diff of the session's checkout against `HEAD` (tracked and untracked
+  files, in a shared repo only), with secret-looking files (`.env`, keys,
+  credentials) skipped and credential-shaped lines masked. Nothing is attached
+  by default.
 - **Nothing goes anywhere else.** No telemetry, no analytics. The "Report issue"
   page and `baton report` only _show_ you a redacted log excerpt; you choose
   whether to paste it into an issue.
@@ -125,6 +131,20 @@ only** and are gone when it restarts, apart from what daemons send again.
 - Sessions in repos you haven't shared, and anything while paused.
 - Your machine id (a random value the server uses to tell your daemon from
   another with the same name) is sent, but identifies only the install.
-- The handoff confirm page and its buttons (accept, start agent) exist only on
-  `127.0.0.1` on your machine. The team server can offer you a handoff; only
-  you, at that page, can accept it or start an agent with it.
+
+## What the team server can make your machine do
+
+Exactly one thing: write a handoff's files. When someone accepts a handoff
+addressed to you on the team website, from a browser **paired with your
+machine** (`baton start --server` prints the pairing link; `baton pair` gives
+a new one), the server asks your daemon to write
+`.baton/handoffs/<id>.md`, its attached files and `changes.patch` into the
+folder you chose (or the receiving session's folder), excluded from git. The
+server checks the pairing; your daemon also only writes handoffs it was
+offered.
+
+Nothing else runs remotely. Starting an agent (`baton handoff start <id>`) and
+applying a patch (`baton handoff apply <id>`) are commands you type on your
+own machine; no button on the website does either. Pairing links work once,
+expire after 10 minutes, and aren't written to any log; the server stores only
+a hash of them and of the browser's pairing cookie.

@@ -10,6 +10,7 @@ import {
   DEFAULT_RECENT,
   DEFAULT_SUMMARIZER_MODEL,
   defaultCodexDir,
+  defaultDaemonName,
   defaultProjectsDir,
   defaultStateFile,
   MIN_TOKEN_LENGTH,
@@ -37,6 +38,11 @@ export const USAGE = `Usage:
   baton pause | resume            Stop / restart sending anything at all
   baton doctor [--server <url>]   Check this machine's setup (and the team server, with BATON_TOKEN)
   baton report                    Print version info and recent redacted logs for a bug report
+  baton pair --server <url>       Print a one-time link that pairs a browser with this machine,
+                                  so it can accept handoffs sent here (start --server prints one too)
+  baton handoff apply <id>        In the folder a handoff was accepted into: put the sender's
+                                  changes.patch on a new branch baton/handoff-<id> (git apply --3way)
+  baton handoff start <id>        Start Claude Code or Codex here with the handoff's prompt
   baton --version
 
 Nothing is sent to a team server until you \`baton share\` a repo. See
@@ -77,6 +83,9 @@ Environment (start and serve):
   BATON_SUMMARIZER_MODEL=<id>      Model to use (ollama: the fastest installed
                                    model; anthropic: ${DEFAULT_SUMMARIZER_MODEL})
   BATON_OLLAMA_URL=<url>           Where Ollama listens (default ${DEFAULT_OLLAMA_URL})
+  BATON_NOTIFY=banner|open|off     How a daemon announces a handoff sent to it: an OS
+                                   notification (default), opening its page in the
+                                   browser, or nothing
 
 baton replay <fixture>: a Claude Code transcript or a Codex rollout (detected from its contents)
   --projects-dir <dir>  Claude Code projects directory a daemon is watching (for Claude Code fixtures)
@@ -237,6 +246,10 @@ export function parseCli(
       case "report":
       case "version":
         return localCommand(command, rest, values, token, vars?.INIT_CWD);
+      case "handoff":
+        return handoffCommand(rest, values, vars?.INIT_CWD);
+      case "pair":
+        return pairCommand(rest, values, token);
       case "replay": {
         const [fixture, ...extra] = rest;
         if (fixture === undefined) return { command: "error", message: "replay needs a fixture" };
@@ -381,6 +394,65 @@ function localCommand(
   }
 }
 
+/** `baton handoff apply|start <id>`: run in the folder a handoff was accepted into. */
+function handoffCommand(
+  rest: readonly string[],
+  values: Record<string, unknown>,
+  initCwd: string | undefined,
+): CliResult {
+  const [sub, id, ...extra] = rest;
+  if (sub !== "apply" && sub !== "start") {
+    return {
+      command: "error",
+      message: "use `baton handoff apply <id>` or `baton handoff start <id>`",
+    };
+  }
+  if (id === undefined)
+    return { command: "error", message: `baton handoff ${sub} needs a handoff id` };
+  if (extra.length > 0) return unexpected(extra[0]);
+  const misplaced = Object.keys(values).find(
+    (k) => values[k] !== undefined && k !== "log-level" && k !== "cwd",
+  );
+  if (misplaced) return { command: "error", message: `--${misplaced} isn't a handoff option` };
+  const cwd = typeof values.cwd === "string" ? values.cwd : ".";
+  return {
+    command: "local",
+    action: {
+      kind: sub === "apply" ? "handoff-apply" : "handoff-start",
+      dir: resolve(initCwd ?? ".", cwd),
+      id,
+    },
+  };
+}
+
+/** `baton pair`: a fresh one-time link that pairs a browser with this machine. */
+function pairCommand(
+  rest: readonly string[],
+  values: Record<string, unknown>,
+  token: string | undefined,
+): CliResult {
+  if (rest.length > 0) return unexpected(rest[0]);
+  const allowed = new Set(["server", "name", "state-file", "log-level"]);
+  const misplaced = Object.keys(values).find((k) => values[k] !== undefined && !allowed.has(k));
+  if (misplaced) return { command: "error", message: `--${misplaced} isn't a pair option` };
+  if (typeof values.server !== "string")
+    return { command: "error", message: "baton pair needs --server <url>" };
+  if (token === undefined)
+    return { command: "error", message: "baton pair needs the team token in BATON_TOKEN" };
+  const stateFile =
+    typeof values["state-file"] === "string" ? values["state-file"] : defaultStateFile();
+  return {
+    command: "local",
+    action: {
+      kind: "pair",
+      server: values.server,
+      token,
+      name: typeof values.name === "string" ? values.name : defaultDaemonName(),
+      machineFile: join(dirname(stateFile), "machine-id"),
+    },
+  };
+}
+
 const unexpected = (arg: string | undefined): CliResult => ({
   command: "error",
   message: `unexpected argument: ${arg}`,
@@ -480,6 +552,7 @@ async function startCommand(
     const server = await startTeamServer(result.config, logger, {
       canvasFile: join(dirname(defaultStateFile()), "team-canvas.json"),
       handoffsFile: join(dirname(defaultStateFile()), "team-handoffs.json"),
+      pairingsFile: join(dirname(defaultStateFile()), "team-pairings.json"),
       notesFile: join(dirname(defaultStateFile()), "team-notes.json"),
       blobsDir: join(dirname(defaultStateFile()), "team-blobs"),
       removedFile: join(dirname(defaultStateFile()), "team-removed.json"),

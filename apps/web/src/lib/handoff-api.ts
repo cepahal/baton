@@ -1,10 +1,13 @@
 import {
   type Handoff,
+  HandoffAnswerError,
   type HandoffCreate,
   HandoffDraft,
   type HandoffDraftRequest,
   HandoffResponse,
   HandoffsResponse,
+  HandoffView,
+  MeResponse,
 } from "@baton/core";
 import { z } from "zod";
 
@@ -46,25 +49,74 @@ export async function fetchHandoffs(signal?: AbortSignal): Promise<Handoff[]> {
   return HandoffsResponse.parse(await res.json()).handoffs;
 }
 
-const InboxList = z.object({
-  offers: z.array(
-    z.object({
-      id: z.string(),
-      sender: z.string(),
-      kind: z.string(),
-      status: z.string(),
-      url: z.string(),
-    }),
-  ),
-});
-export type InboxEntry = z.infer<typeof InboxList>["offers"][number];
+/** `GET /handoffs/:id`: the handoff and whether this browser may answer it. */
+export async function fetchHandoffView(id: string, signal?: AbortSignal): Promise<HandoffView> {
+  const res = await fetch(`/handoffs/${encodeURIComponent(id)}`, {
+    headers: { accept: "application/json" },
+    ...(signal ? { signal } : {}),
+  });
+  if (!res.ok) throw await failure(res, "Loading the handoff");
+  return HandoffView.parse(await res.json());
+}
 
-/** `GET /inbox`: offers waiting on this machine. Empty where there's no local inbox (team server). */
-export async function fetchInbox(signal?: AbortSignal): Promise<InboxEntry[]> {
-  const res = await fetch("/inbox", signal ? { signal } : {});
-  if (!res.ok) return [];
-  const parsed = InboxList.safeParse(await res.json().catch(() => undefined));
-  return parsed.success ? parsed.data.offers : [];
+export type AcceptResult =
+  | { ok: true; handoff: Handoff }
+  | { ok: false; error: string; needFolder: boolean };
+
+/**
+ * `POST /handoffs/:id/accept`: the receiving machine writes the handoff into
+ * `folder` (or its session's folder). That is all accepting does.
+ */
+export async function acceptHandoff(id: string, folder?: string): Promise<AcceptResult> {
+  const res = await fetch(`/handoffs/${encodeURIComponent(id)}/accept`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(folder ? { folder } : {}),
+  });
+  const body: unknown = await res.json().catch(() => undefined);
+  if (res.ok) return { ok: true, handoff: HandoffResponse.parse(body).handoff };
+  const parsed = HandoffAnswerError.safeParse(body);
+  return {
+    ok: false,
+    error: parsed.success ? parsed.data.error : `Accepting failed: HTTP ${res.status}`,
+    needFolder: parsed.success && parsed.data.needFolder === true,
+  };
+}
+
+/** `POST /handoffs/:id/decline`, with an optional note for the sender. */
+export async function declineHandoff(id: string, note?: string): Promise<Handoff> {
+  const res = await fetch(`/handoffs/${encodeURIComponent(id)}/decline`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(note ? { note } : {}),
+  });
+  if (!res.ok) throw await failure(res, "Declining");
+  return HandoffResponse.parse(await res.json()).handoff;
+}
+
+/** `GET /me`: which machine, if any, this browser answers handoffs for. */
+export async function fetchMe(signal?: AbortSignal): Promise<MeResponse> {
+  const res = await fetch("/me", signal ? { signal } : {});
+  if (!res.ok) throw await failure(res, "Loading who you are");
+  return MeResponse.parse(await res.json());
+}
+
+/** `POST /pair/claim`: pairs this browser with the machine that made the code. */
+export async function claimPairing(code: string): Promise<MeResponse> {
+  const res = await fetch("/pair/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) throw await failure(res, "Pairing");
+  return MeResponse.parse(await res.json());
+}
+
+/** Whether this browser answers for the machine a handoff is addressed to. */
+export function isForMe(handoff: Handoff, me: MeResponse | undefined): boolean {
+  if (!me) return false;
+  if (me.local) return true;
+  return me.pairing !== null && handoff.to.daemon === me.pairing.name;
 }
 
 /** Newest first, one per id, the latest update winning. */

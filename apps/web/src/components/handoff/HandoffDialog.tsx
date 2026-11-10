@@ -21,8 +21,9 @@ export function partyLabel(s: SessionInfo | undefined): string {
 }
 
 /**
- * The sender's preview: the drafted packet, editable. Text only: no code is
- * sent. Nothing is sent until "Send handoff".
+ * The sender's preview: the drafted packet, editable. Code is sent only when
+ * "Attach my uncommitted changes" is ticked, which the hub offers only to a
+ * browser paired with the sending machine. Nothing is sent until "Send handoff".
  */
 const DIALOG_TITLES = {
   full: "Hand off session",
@@ -37,6 +38,7 @@ export function HandoffDialog({ drag, from, to, onSent, onClose }: Props) {
   const [sender, setSender] = useState(() => loadSender(storage()));
   const [error, setError] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  const [attachCode, setAttachCode] = useState(false);
   const toId = to?.sessionId;
   // The sender name only labels the draft's header: read it, don't redraft as it is typed.
   const senderRef = useRef(sender);
@@ -85,6 +87,7 @@ export function HandoffDialog({ drag, from, to, onSent, onClose }: Props) {
       ...(drag.kind === "note" ? { noteId: drag.noteId } : {}),
       markdown,
       sender: sender.trim(),
+      ...(attachCode && draft?.canAttachCode ? { attachCode: true } : {}),
     }).then(onSent, (err: unknown) => {
       setBusy(false);
       setError(err instanceof Error ? err.message : String(err));
@@ -149,6 +152,16 @@ export function HandoffDialog({ drag, from, to, onSent, onClose }: Props) {
               placeholder="shown to the receiver"
             />
           </label>
+          {draft?.canAttachCode && (
+            <label className="handoff-check">
+              <input
+                type="checkbox"
+                checked={attachCode}
+                onChange={(e) => setAttachCode(e.target.checked)}
+              />
+              Attach my uncommitted changes (saved as changes.patch; secrets masked)
+            </label>
+          )}
         </div>
         {error && (
           <p className="handoff-error" role="alert">
@@ -165,7 +178,7 @@ export function HandoffDialog({ drag, from, to, onSent, onClose }: Props) {
             disabled={busy || (!draft && !error) || !sender.trim() || markdown.trim() === ""}
             onClick={send}
           >
-            {busy ? "Sending…" : "Send handoff"}
+            {busy ? (attachCode ? "Collecting changes…" : "Sending…") : "Send handoff"}
           </button>
         </footer>
       </div>

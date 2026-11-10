@@ -1,4 +1,4 @@
-import type { CanvasPoint, DomainLabel } from "@baton/core";
+import type { CanvasPoint, DomainLabel, MeResponse } from "@baton/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Canvas } from "./components/canvas/Canvas.js";
 import { NotePreview } from "./components/canvas/NotePreview.js";
@@ -22,7 +22,7 @@ import { randomNoteColor } from "./lib/notes-api.js";
 import { deleteSession } from "./lib/sessions.js";
 import { isLive } from "./lib/time.js";
 
-export function App() {
+export function App({ me }: { me: MeResponse | undefined }) {
   // Batch store notifications: a replay of thousands of events renders once per frame.
   const [store] = useState(() => new EventStore({ schedule: (flush) => setTimeout(flush, 16) }));
   const canvas = useCanvasPositions();
@@ -172,7 +172,7 @@ export function App() {
           onClose={() => setPreviewId(undefined)}
         />
       )}
-      <HandoffTray handoffs={handoffs.handoffs} inbox={handoffs.inbox} now={now} />
+      <HandoffTray handoffs={handoffs.handoffs} me={me} now={now} />
       {composing && (
         <HandoffDialog
           drag={composing.drag}

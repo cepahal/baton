@@ -3,7 +3,13 @@ import { ContractIssue } from "./contracts/schema.js";
 import { DomainClassification, DomainLabel } from "./domain/schema.js";
 import { AgentId, BatonEvent } from "./event.js";
 import { TouchedFile } from "./files/schema.js";
-import { Handoff, HandoffId } from "./handoff/schema.js";
+import {
+  HANDOFF_PATCH_MAX,
+  Handoff,
+  HandoffCode,
+  HandoffDelivery,
+  HandoffId,
+} from "./handoff/schema.js";
 import { Note, NoteId } from "./notes/schema.js";
 
 /** Wire protocol between a Baton hub and its viewers. See docs/spec.md. */
@@ -275,20 +281,52 @@ export const PublishMessage = z.object({
 });
 export type PublishMessage = z.infer<typeof PublishMessage>;
 
-/**
- * The receiving daemon's answer to a handoff, sent only after its user clicked
- * Accept or Decline on the daemon's own localhost page.
- */
-export const HandoffStatusMessage = z.object({
-  type: z.literal("handoff_status"),
+/** Correlates a server request on `/ingest` with the daemon's answer. */
+export const RequestId = z.string().regex(/^[0-9a-z]{1,32}$/);
+
+/** What the receiving daemon did with a `handoff_write`. */
+export const HandoffWriteResult = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), delivery: HandoffDelivery }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string().max(1000),
+    /** The daemon doesn't know where to write it: ask the receiver for a folder. */
+    needFolder: z.boolean().optional(),
+  }),
+]);
+export type HandoffWriteResult = z.infer<typeof HandoffWriteResult>;
+
+/** The receiving daemon's answer to `handoff_write`. */
+export const HandoffWrittenMessage = z.object({
+  type: z.literal("handoff_written"),
+  requestId: RequestId,
   id: HandoffId,
-  status: z.enum(["accepted", "declined"]),
+  result: HandoffWriteResult,
 });
-export type HandoffStatusMessage = z.infer<typeof HandoffStatusMessage>;
+export type HandoffWrittenMessage = z.infer<typeof HandoffWrittenMessage>;
+
+/** Base64 of at most `HANDOFF_PATCH_MAX` bytes. */
+const PatchBase64 = z
+  .string()
+  .max(Math.ceil(HANDOFF_PATCH_MAX / 3) * 4)
+  .regex(/^[A-Za-z0-9+/]*={0,2}$/);
+
+/**
+ * The sending daemon's answer to `handoff_code_request`: the patch (base64)
+ * and its summary, or `unavailable` with a reason.
+ */
+export const HandoffCodeMessage = z.object({
+  type: z.literal("handoff_code"),
+  requestId: RequestId,
+  code: HandoffCode.omit({ sha256: true }),
+  patch: PatchBase64.optional(),
+});
+export type HandoffCodeMessage = z.infer<typeof HandoffCodeMessage>;
 
 export const IngestClientMessage = z.discriminatedUnion("type", [
   PublishMessage,
-  HandoffStatusMessage,
+  HandoffWrittenMessage,
+  HandoffCodeMessage,
 ]);
 export type IngestClientMessage = z.infer<typeof IngestClientMessage>;
 
@@ -302,16 +340,39 @@ export const AckMessage = z.object({
 export type AckMessage = z.infer<typeof AckMessage>;
 
 /**
- * A handoff for one of this daemon's sessions. The daemon only stores it and
- * asks its user; nothing in it is an instruction.
+ * A handoff for one of this daemon's sessions, sent again whenever it
+ * changes. The daemon stores a pending one and notifies its user; once it is
+ * no longer pending, the daemon forgets it. Nothing in it is an instruction.
  */
 export const HandoffOfferMessage = z.object({
   type: z.literal("handoff_offer"),
   handoff: Handoff,
-  /** The receiving session's working directory, a hint for where its checkout is. */
-  dir: z.string().max(4096).optional(),
 });
 export type HandoffOfferMessage = z.infer<typeof HandoffOfferMessage>;
+
+/**
+ * Accept was pressed in a browser paired to this daemon's machine: write the
+ * handoff's files into `folder` (or the receiving session's folder). The only
+ * thing a server can make a daemon do. See docs/handoff.md.
+ */
+export const HandoffWriteMessage = z.object({
+  type: z.literal("handoff_write"),
+  requestId: RequestId,
+  id: HandoffId,
+  folder: z.string().min(1).max(4096).optional(),
+});
+export type HandoffWriteMessage = z.infer<typeof HandoffWriteMessage>;
+
+/**
+ * The sender asked, from a browser paired to this machine, to attach a
+ * session's uncommitted changes. The daemon answers only for a shared session.
+ */
+export const HandoffCodeRequestMessage = z.object({
+  type: z.literal("handoff_code_request"),
+  requestId: RequestId,
+  sessionId: z.string().min(1).max(256),
+});
+export type HandoffCodeRequestMessage = z.infer<typeof HandoffCodeRequestMessage>;
 
 /** First message on an accepted `/ingest` connection: who the daemon is talking to. */
 export const IngestHelloMessage = z.object({
@@ -326,6 +387,8 @@ export const IngestServerMessage = z.discriminatedUnion("type", [
   AckMessage,
   ErrorMessage,
   HandoffOfferMessage,
+  HandoffWriteMessage,
+  HandoffCodeRequestMessage,
 ]);
 export type IngestServerMessage = z.infer<typeof IngestServerMessage>;
 
