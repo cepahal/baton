@@ -1,4 +1,5 @@
 import { createCodexParser } from "../codex/parser.js";
+import { type CursorParserOptions, createCursorParser } from "../cursor/parser.js";
 import { AGENT_IDS, type AgentId, type BatonEvent } from "../event.js";
 import {
   createTranscriptParser,
@@ -9,6 +10,10 @@ import {
 
 /** How the daemon gets an agent's records off disk. See "Sources" in docs/spec.md. */
 export type SourceKind = "jsonl-tail" | "rollout-tail";
+
+/** Parser settings shared by adapters, plus Cursor's path-derived session data. */
+export type AdapterOptions = ParserOptions &
+  Pick<CursorParserOptions, "sessionId" | "projectPath" | "parentSessionId" | "fallbackTimestamp">;
 
 /**
  * One coding agent's log format. Pure: the daemon owns the files and feeds
@@ -32,7 +37,9 @@ const CODEX_ROLLOUT_RE = /^rollout-.+\.jsonl(?:\.zst)?$/i;
 
 const isCodexRollout = (path: string): boolean => CODEX_ROLLOUT_RE.test(basename(path));
 const isClaudeTranscript = (path: string): boolean =>
-  /\.jsonl$/i.test(path) && !isCodexRollout(path);
+  /\.jsonl$/i.test(path) && !isCodexRollout(path) && !isCursorTranscript(path);
+const isCursorTranscript = (path: string): boolean =>
+  /(?:^|[\\/])agent-transcripts(?:[\\/].*)?\.jsonl$/i.test(path);
 
 /** An adapter's static description: everything but the parser. */
 export type AgentInfo = Omit<AgentAdapter, "parse">;
@@ -50,19 +57,31 @@ const AGENTS: Record<AgentId, AgentInfo> = {
     defaultRoots: () => ["~/.codex/sessions"],
     detect: isCodexRollout,
   },
+  cursor: {
+    id: "cursor",
+    source: "jsonl-tail",
+    defaultRoots: () => ["~/.cursor/projects"],
+    detect: isCursorTranscript,
+  },
 };
 
 /** Every agent Baton can follow; the daemon starts one source per entry. */
 export const AGENT_REGISTRY: readonly AgentInfo[] = AGENT_IDS.map((id) => AGENTS[id]);
 
 /** A fresh adapter (and parser state) for one session of agent `id`. */
-export function createAdapter(id: AgentId, options: ParserOptions = {}): AgentAdapter {
-  const parser = id === "codex" ? createCodexParser(options) : createTranscriptParser(options);
+export function createAdapter(id: AgentId, options: AdapterOptions = {}): AgentAdapter {
+  const parser =
+    id === "codex"
+      ? createCodexParser(options)
+      : id === "cursor"
+        ? createCursorParser(options)
+        : createTranscriptParser(options);
   return { ...AGENTS[id], parse: (record) => parser.parseLine(record) };
 }
 
-/** The agent whose session log `path` is, if any. Codex is checked first: its names are stricter. */
+/** The agent whose session log `path` is, if any. Cursor and Codex paths are specific. */
 export function detectAgent(path: string): AgentId | undefined {
+  if (AGENTS.cursor.detect(path)) return "cursor";
   if (AGENTS.codex.detect(path)) return "codex";
   if (AGENTS["claude-code"].detect(path)) return "claude-code";
   return undefined;
@@ -104,6 +123,15 @@ export function sniffAgent(text: string): AgentId | undefined {
       continue;
     }
     if (typeof record !== "object" || record === null || Array.isArray(record)) continue;
+    const role: unknown = Reflect.get(record, "role");
+    const message: unknown = Reflect.get(record, "message");
+    const content =
+      typeof message === "object" && message !== null ? Reflect.get(message, "content") : undefined;
+    if (
+      (role === "user" || role === "assistant") &&
+      (typeof content === "string" || Array.isArray(content))
+    )
+      return "cursor";
     const type: unknown = Reflect.get(record, "type");
     if (typeof type !== "string") continue;
     const payload: unknown = Reflect.get(record, "payload");

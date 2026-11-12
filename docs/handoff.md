@@ -194,7 +194,8 @@ The server marks the handoff `accepted` with its `delivery`, and the page shows:
 - The prompt with **Copy**: `Read .baton/handoffs/<id>.md and continue the work
   it describes.`, plus with a patch `The sender's changes are in
   .baton/handoffs/<id>/changes.patch; adapt them to this codebase.`
-- The command: `cd <folder> && claude "<prompt>"` (or `codex "<prompt>"`).
+- The command: `cd <folder> && claude "<prompt>"`, `codex "<prompt>"` or Cursor's
+  Agent CLI, `agent "<prompt>"`.
 - When apply is available: `cd <folder> && baton handoff apply <id>`.
 
 **Decline** marks it declined (with the note) on the server and tells the
@@ -207,7 +208,7 @@ daemon, which forgets the offer.
   from the current `HEAD` and runs `git apply --3way --index`, which uses the
   base commit to merge. Conflicts are left marked; on any other failure it
   switches back and deletes the branch.
-- `baton handoff start <id>`: runs `claude`/`codex` with the prompt in this
+- `baton handoff start <id>`: runs `claude`, `codex` or Cursor's `agent` command with the prompt in this
   terminal, in the current folder. Never with permission-bypass flags.
 
 The localhost confirm page is gone; `/inbox/:id` redirects to the handoff page.

@@ -97,6 +97,17 @@ describe("renderNote", () => {
     expect(md).toContain("problem.md");
   });
 
+  it("labels a Cursor recipient, while preserving the Codex label", () => {
+    const md = renderNote(
+      { sender: "Grace", to: { ...PARTY, agent: "cursor" }, at: note.updatedAt },
+      note,
+    );
+    expect(md).toContain("someone's Cursor session `abc12345`");
+    expect(renderNote({ sender: "Grace", to: PARTY, at: note.updatedAt }, note)).toContain(
+      "someone's Codex session `abc12345`",
+    );
+  });
+
   it("drafts a note handoff without a summarizer", () => {
     const built = buildHandoffDraft(
       [],

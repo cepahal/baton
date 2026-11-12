@@ -1,6 +1,6 @@
 import type { Note } from "./schema.js";
 
-const AGENT_NAMES = { "claude-code": "Claude Code", codex: "Codex" } as const;
+const AGENT_NAMES = { "claude-code": "Claude Code", codex: "Codex", cursor: "Cursor" } as const;
 
 export type NoteHeader = {
   sender: string;

@@ -1,4 +1,4 @@
-import { type BatonEvent, ServerMessage } from "@baton/core";
+import { type BatonEvent, PROTOCOL_VERSION, ServerMessage } from "@baton/core";
 import { describe, expect, it } from "vitest";
 import { MemoryEventLog } from "../src/event-log.js";
 import { type ClientSocket, Hub, type HubOptions } from "../src/hub.js";
@@ -51,7 +51,7 @@ describe("Hub", () => {
     h.publish([ev(SESSION_A, "c")], { backlog: true });
     expect(s.sent[0]).toEqual({
       type: "hello",
-      protocol: 1,
+      protocol: PROTOCOL_VERSION,
       epoch: h.epoch,
       seq: 0,
       session: "all",

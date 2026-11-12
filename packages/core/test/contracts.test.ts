@@ -189,6 +189,16 @@ describe("writtenTexts", () => {
     ]);
     expect(writtenTexts(call("Read", { file_path: "/r/a.ts" }))).toEqual([]);
   });
+
+  it("extracts Cursor Write and StrReplace content while rejecting malformed content", () => {
+    expect(writtenTexts(call("Write", { path: "/r/new.ts", contents: "const x = 1" }))).toEqual([
+      { path: "/r/new.ts", text: "const x = 1", whole: true },
+    ]);
+    expect(writtenTexts(call("StrReplace", { path: "/r/edit.ts", new_string: "updated" }))).toEqual(
+      [{ path: "/r/edit.ts", text: "updated", whole: false }],
+    );
+    expect(writtenTexts(call("Write", { path: "/r/new.ts", contents: 42 }))).toEqual([]);
+  });
 });
 
 const fields = (n: number, prefix = "f") =>

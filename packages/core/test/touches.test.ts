@@ -56,6 +56,19 @@ describe("fileTouches", () => {
     ]);
   });
 
+  it("reads Cursor file tool paths and content, and ignores malformed paths", () => {
+    expect(fileTouches(call("Write", { path: "/w/new.ts", contents: "a\nb" }))).toEqual([
+      { path: "/w/new.ts", ranges: [[1, 2]] },
+    ]);
+    expect(fileTouches(call("StrReplace", { path: "/w/edit.ts", new_string: "next" }))).toEqual([
+      { path: "/w/edit.ts", ranges: [] },
+    ]);
+    expect(fileTouches(call("Delete", { path: "/w/old.ts" }))).toEqual([
+      { path: "/w/old.ts", ranges: [] },
+    ]);
+    expect(fileTouches(call("Write", { path: 42, contents: "ignored" }))).toEqual([]);
+  });
+
   it("ignores reads, other kinds and malformed input", () => {
     expect(fileTouches(call("Read", { file_path: "/w/a.ts" }))).toEqual([]);
     expect(fileTouches(call("Edit", { file_path: 3 }))).toEqual([]);

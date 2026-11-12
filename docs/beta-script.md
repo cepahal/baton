@@ -1,8 +1,8 @@
 # Beta test script
 
 About an hour, best done together on a call. One person runs the team server;
-everyone else (3 to 6 people, a mix of macOS and Windows, Claude Code and
-Codex) follows the README quickstart on their own machine first.
+everyone else (3 to 6 people, a mix of macOS and Windows, Claude Code, Codex and
+Cursor) follows the README quickstart on their own machine first.
 
 For each scenario: do the steps, check what you should see, and if it doesn't
 match, use **Report issue** (bottom of the sidebar) and file a bug with what
@@ -19,7 +19,7 @@ you did. Note your OS and agent in every report.
 1. In a throwaway or low-stakes repo: `baton share`, then
    `baton start --server ws://<server>:7777 --name <you>`.
 2. Open the viewer, sign in with the token.
-3. Start a Claude Code or Codex session in that repo and ask it something small.
+3. Start a Claude Code, Codex or Cursor session in that repo and ask it something small.
 4. **Expect** your session in the sidebar under your name within a few seconds,
    with the right agent badge. Drag it onto the canvas.
 5. **Expect** a domain label (frontend, backend, …) on the card after a few

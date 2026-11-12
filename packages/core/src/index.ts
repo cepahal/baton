@@ -1,3 +1,4 @@
+export type { AdapterOptions } from "./agents/adapter.js";
 export {
   AGENT_REGISTRY,
   type AgentAdapter,
@@ -40,6 +41,7 @@ export {
   type Shape,
   type ShapeField,
 } from "./contracts/schema.js";
+export { type CursorParserOptions, createCursorParser, cursorTimestamp } from "./cursor/parser.js";
 export {
   type ClassifyOptions,
   classifyDomain,

@@ -16,6 +16,7 @@ export type DoctorInput = {
   nodeVersion: string;
   projectsDir: string;
   codexDir: string;
+  cursorDir?: string;
   sharingFile: string;
   logFile: string;
   server?: string | undefined;
@@ -77,16 +78,17 @@ export async function runDoctor(
 
   const claude = await deps.isDir(input.projectsDir);
   const codex = await deps.isDir(input.codexDir);
+  const cursor = input.cursorDir ? await deps.isDir(input.cursorDir) : false;
   checks.push(
-    claude || codex
+    claude || codex || cursor
       ? {
           status: "ok",
-          what: `agent logs found: ${[claude && "Claude Code", codex && "Codex"].filter(Boolean).join(", ")}`,
+          what: `agent logs found: ${[claude && "Claude Code", codex && "Codex", cursor && "Cursor"].filter(Boolean).join(", ")}`,
         }
       : {
           status: "warn",
-          what: `no agent logs found (looked in ${input.projectsDir} and ${input.codexDir})`,
-          fix: "run Claude Code or Codex once, or pass --projects-dir / --codex-dir",
+          what: `no agent logs found (looked in ${input.projectsDir}, ${input.codexDir}${input.cursorDir ? ` and ${input.cursorDir}` : ""})`,
+          fix: "run Claude Code, Codex or Cursor once, or pass --projects-dir / --codex-dir / --cursor-dir",
         },
   );
 

@@ -7,7 +7,7 @@ import { limitConcurrency } from "./limit.js";
 import { isCompressed, openLog, zstdAvailable } from "./log-file.js";
 import { mergeByTime } from "./merge.js";
 import type { EventSink } from "./sink.js";
-import { belongsTo, type LogSource, logKey, sessionKey } from "./sources.js";
+import { belongsTo, cursorSessionInfo, type LogSource, logKey, sessionKey } from "./sources.js";
 import type { StateStore } from "./state-store.js";
 import { errnoCode, type PartOptions, TranscriptTail } from "./tail.js";
 
@@ -82,6 +82,7 @@ export class TranscriptWatcher {
   #sources: LogSource[] = [];
   #watcher: FSWatcher | undefined;
   #sweep: NodeJS.Timeout | undefined;
+  readonly #mtimes = new Map<string, { mtimeMs: number; ctimeMs: number }>();
   #closed = false;
 
   constructor(readonly options: WatcherOptions) {
@@ -107,7 +108,7 @@ export class TranscriptWatcher {
     if (this.#sources.length === 0) {
       const dirs = this.options.sources.map((s) => s.dir).join(", ");
       throw new Error(
-        `no session log directory found: ${dirs} (run Claude Code or Codex once, or pass --projects-dir / --codex-dir)`,
+        `no session log directory found: ${dirs} (run Claude Code, Codex or Cursor once, or pass --projects-dir / --codex-dir / --cursor-dir)`,
       );
     }
 
@@ -120,6 +121,7 @@ export class TranscriptWatcher {
     const opened = await Promise.all(
       groups.map((g) => this.#limit(() => this.#open(g, recent.has(g.key)))),
     );
+    await this.#rememberMtimes(files);
     this.#pruneState(new Set(files.map(logKey)));
 
     const backlog = opened.flatMap((r) => r.backlog);
@@ -195,19 +197,29 @@ export class TranscriptWatcher {
    * leaves the file's mtime unchanged, so chokidar drops the change events.
    */
   async #sweepSizes(): Promise<void> {
-    const parts = [...this.#tails.values()].flatMap((t) => t.parts).filter((p) => !p.sealed);
+    const parts = [...this.#tails.values()]
+      .flatMap((tail) => tail.parts.map((part) => ({ tail, part })))
+      .filter(({ part }) => !part.sealed);
     await Promise.all(
-      parts.map(async (part) => {
-        const size = await stat(part.path).then(
-          (s) => s.size,
+      parts.map(async ({ tail, part }) => {
+        const info = await stat(part.path).then(
+          (s) => ({ size: s.size, mtimeMs: s.mtimeMs, ctimeMs: s.ctimeMs }),
           () => undefined,
         );
-        if (
-          size !== undefined &&
-          size !== part.offset &&
-          !this.#jobs.get(this.#keyOf(part.path))?.running
-        ) {
-          this.#schedule(part.path);
+        if (!info) return;
+        const key = logKey(part.path);
+        const previousMtime = this.#mtimes.get(key);
+        const rewritten =
+          tail.agent === "cursor" &&
+          info.size === part.offset &&
+          previousMtime !== undefined &&
+          (info.mtimeMs !== previousMtime.mtimeMs || info.ctimeMs !== previousMtime.ctimeMs);
+        const changed = info.size !== part.offset || rewritten;
+        const running = this.#jobs.get(this.#keyOf(part.path))?.running;
+        if (changed) {
+          if (!running) this.#schedule(part.path);
+        } else {
+          this.#mtimes.set(key, { mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs });
         }
       }),
     );
@@ -339,10 +351,13 @@ export class TranscriptWatcher {
 
   #tail(source: LogSource, path: string, options: PartOptions): TranscriptTail {
     const log = this.#log.child({ file: path });
+    const cursor = source.agent === "cursor" ? cursorSessionInfo(source, path) : undefined;
     return new TranscriptTail(path, {
       ...options,
       agent: source.agent,
       parser: {
+        ...(cursor ?? {}),
+        ...(source.agent === "cursor" ? { fallbackTimestamp: new Date().toISOString() } : {}),
         onWarning: (w) => log.warn({ line: w.line, reason: w.reason }, "skipped transcript line"),
         debug: (message) => log.debug(message),
       },
@@ -405,6 +420,11 @@ export class TranscriptWatcher {
       }
     }
     if (!tail) return false;
+    const before = tail.bytesRead;
+    if (source.agent === "cursor" && (await this.#cursorWasRewritten(tail, paths))) {
+      tail.rereadCursorHistory();
+    }
+    await this.#rememberMtimes(paths);
 
     for (let attempt = 0; ; attempt++) {
       try {
@@ -418,7 +438,6 @@ export class TranscriptWatcher {
           const history = await tail.warmUp(this.options.backlogPerSession);
           if (history.length > 0) await this.#publish(history, true);
         }
-        const before = tail.bytesRead;
         const { events, reset, gone } = await tail.catchUp();
         if (reset) {
           this.#log.info({ file: tail.path }, "transcript shrank or was replaced; rereading it");
@@ -445,6 +464,37 @@ export class TranscriptWatcher {
         await new Promise((r) => setTimeout(r, RETRY_MS));
       }
     }
+  }
+
+  async #rememberMtimes(paths: readonly string[]): Promise<void> {
+    await Promise.all(
+      paths.map(async (path) => {
+        const times = await stat(path).then(
+          (s) => ({ mtimeMs: s.mtimeMs, ctimeMs: s.ctimeMs }),
+          () => undefined,
+        );
+        if (times) this.#mtimes.set(logKey(path), times);
+      }),
+    );
+  }
+
+  /** Cursor may rewrite a completed transcript in place without changing its size. */
+  async #cursorWasRewritten(tail: TranscriptTail, paths: readonly string[]): Promise<boolean> {
+    const parts = new Map(tail.parts.map((part) => [part.path, part]));
+    for (const path of paths) {
+      const part = parts.get(path);
+      const previous = this.#mtimes.get(logKey(path));
+      if (!part || !previous) continue;
+      const current = await stat(path).catch(() => undefined);
+      if (
+        current &&
+        current.size === part.offset &&
+        (current.mtimeMs !== previous.mtimeMs || current.ctimeMs !== previous.ctimeMs)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Saves each file's offset. A sealed (never decompressed) file keeps its old entry. */

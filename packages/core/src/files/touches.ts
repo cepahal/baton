@@ -11,8 +11,8 @@ export type FileTouch = {
 };
 
 /**
- * Files a tool call writes: Claude Edit/Write/MultiEdit/NotebookEdit and Codex
- * patches. Line ranges come only from what the event carries: a Write's whole
+ * Files a tool call writes: Claude and Cursor file edits, plus Codex patches.
+ * Line ranges come only from what the event carries: a Write's whole
  * content, a Codex added file, or a Codex diff's hunk headers. Claude Edit
  * results don't say where the edit landed, so those touches have no ranges.
  */
@@ -24,11 +24,20 @@ export function fileTouches(event: BatonEvent): FileTouch[] {
   switch (meta?.toolName) {
     case "Edit":
     case "MultiEdit":
-      return typeof input.file_path === "string" ? [{ path: input.file_path, ranges: [] }] : [];
+    case "StrReplace": {
+      const path = stringField(input, "file_path") ?? stringField(input, "path");
+      return path ? [{ path, ranges: [] }] : [];
+    }
     case "Write": {
-      if (typeof input.file_path !== "string") return [];
-      const lines = typeof input.content === "string" ? lineCount(input.content) : 0;
-      return [{ path: input.file_path, ranges: lines > 0 ? [[1, lines]] : [] }];
+      const path = stringField(input, "file_path") ?? stringField(input, "path");
+      if (!path) return [];
+      const content = stringField(input, "content") ?? stringField(input, "contents");
+      const lines = content === undefined ? 0 : lineCount(content);
+      return [{ path, ranges: lines > 0 ? [[1, lines]] : [] }];
+    }
+    case "Delete": {
+      const path = stringField(input, "file_path") ?? stringField(input, "path");
+      return path ? [{ path, ranges: [] }] : [];
     }
     case "NotebookEdit":
       return typeof input.notebook_path === "string"
@@ -85,4 +94,9 @@ function lineCount(text: string): number {
 
 function asRecord(v: JsonValue | undefined): Record<string, JsonValue> | undefined {
   return typeof v === "object" && v !== null && !Array.isArray(v) ? v : undefined;
+}
+
+function stringField(record: Record<string, JsonValue>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
 }

@@ -34,10 +34,7 @@ export function record(
   });
 }
 
-/**
- * A temp projects dir with one project folder, plus a Codex sessions dir that
- * doesn't exist yet (so tests never read the real `~/.codex`). Removed by `cleanup`.
- */
+/** Temporary Claude, Codex and Cursor roots that never scan the user's agent logs. */
 export async function tempProjects() {
   const root = await mkdtemp(join(tmpdir(), "baton-daemon-"));
   const projectsDir = join(root, "projects");
@@ -47,6 +44,8 @@ export async function tempProjects() {
     root,
     projectsDir,
     codexDir: join(root, "codex"),
+    // Daemon tests never scan the user's actual Cursor transcripts.
+    cursorDir: join(root, "cursor"),
     stateFile: join(root, "state.json"),
     transcript: (session: string) => join(project, `${session}.jsonl`),
     append: (file: string, data: string) => appendFile(file, data),
@@ -55,7 +54,7 @@ export async function tempProjects() {
 }
 
 export function start(
-  dirs: { projectsDir: string; codexDir: string; stateFile: string },
+  dirs: { projectsDir: string; codexDir: string; cursorDir: string; stateFile: string },
   overrides: Parameters<typeof resolveConfig>[0] = {},
 ): Promise<Daemon> {
   const config = resolveConfig({

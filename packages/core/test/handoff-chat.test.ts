@@ -39,6 +39,12 @@ describe("whole-chat handoff", () => {
     expect(HandoffKind.parse("chat")).toBe("chat");
   });
 
+  it("labels Cursor replies and keeps unknown agents out of the event schema", () => {
+    const cursorReply = { ...ev("reply", "Cursor finished."), agent: "cursor" as const };
+    const md = renderChat(["# Chat from Ada", ""], [cursorReply]);
+    expect(md).toContain("### Cursor");
+  });
+
   it("renders the conversation in order from the compact view, without a model", () => {
     const events = [
       ev("session_start", ""),

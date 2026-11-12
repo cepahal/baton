@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type AgentId, sniffAgent } from "@baton/core";
+import { type AgentId, cursorTimestamp, sniffAgent } from "@baton/core";
 import type { Logger } from "pino";
 
 export type ReplayOptions = {
@@ -11,6 +11,8 @@ export type ReplayOptions = {
   projectsDir?: string | undefined;
   /** Codex sessions directory to write into, as a daemon would watch it. */
   codexDir?: string | undefined;
+  /** Cursor projects directory to write into, as a daemon would watch it. */
+  cursorDir?: string | undefined;
   /** Recorded gaps are divided by this. */
   speed: number;
   /** Simulated user: replaces the home-directory username in paths, and labels the run. */
@@ -58,16 +60,25 @@ const HOME_USER = /(Users[\\/]+|Users-|\/home\/+)([^\\/\s"'-]+)/g;
  */
 export function planReplay(
   fixtureText: string,
-  options: Pick<ReplayOptions, "projectsDir" | "codexDir" | "speed" | "as" | "maxGapMs" | "cwd"> & {
+  options: Pick<
+    ReplayOptions,
+    "projectsDir" | "codexDir" | "cursorDir" | "speed" | "as" | "maxGapMs" | "cwd"
+  > & {
     seed: string;
     startMs: number;
   },
 ): ReplayPlan {
   if (!(options.speed > 0)) throw new RangeError("speed must be positive");
   const agent = sniffAgent(fixtureText) ?? "claude-code";
-  const root = agent === "codex" ? options.codexDir : options.projectsDir;
+  const root =
+    agent === "codex"
+      ? options.codexDir
+      : agent === "cursor"
+        ? options.cursorDir
+        : options.projectsDir;
   if (root === undefined) {
-    const flag = agent === "codex" ? "--codex-dir" : "--projects-dir";
+    const flag =
+      agent === "codex" ? "--codex-dir" : agent === "cursor" ? "--cursor-dir" : "--projects-dir";
     throw new Error(`this fixture is a ${agent} session: replaying it needs ${flag}`);
   }
   const uuids = new Map<string, string>();
@@ -83,7 +94,10 @@ export function planReplay(
   const user = pathSafe(options.as);
   const rehome = (s: string) =>
     s.replace(UUID, mapUuid).replace(HOME_USER, (_m, prefix: string) => `${prefix}${user}`);
-  const fromCwd = options.cwd === undefined ? undefined : recordedCwd(fixtureText, rehome);
+  const recorded =
+    recordedCwd(fixtureText, rehome) ??
+    (agent === "cursor" ? recordedCursorCwd(fixtureText, rehome) : undefined);
+  const fromCwd = options.cwd === undefined ? undefined : recorded;
   const toCwd = options.cwd;
   const rewrite =
     fromCwd === undefined || toCwd === undefined
@@ -107,10 +121,13 @@ export function planReplay(
       lines.push({ delayMs: elapsed, text: raw });
       continue;
     }
-    const value = mapStrings(record, rewrite);
+    let value = mapStrings(record, rewrite);
     let offset = 0;
-    if (isObject(value) && typeof value.timestamp === "string") {
-      const ts = Date.parse(value.timestamp);
+    const cursorTs = agent === "cursor" ? cursorTimestamp(JSON.stringify(value)) : undefined;
+    const recordTimestamp =
+      isObject(value) && typeof value.timestamp === "string" ? value.timestamp : cursorTs;
+    if (recordTimestamp) {
+      const ts = Date.parse(recordTimestamp);
       if (!Number.isNaN(ts)) {
         if (firstTs === undefined) {
           firstTs = ts;
@@ -122,7 +139,13 @@ export function planReplay(
         }
         // Out-of-order records keep their (scaled) distance behind the latest one.
         offset = (ts - latestTs) / options.speed;
-        value.timestamp = new Date(options.startMs + elapsed + offset).toISOString();
+        const replayTs = new Date(options.startMs + elapsed + offset).toISOString();
+        if (isObject(value) && typeof value.timestamp === "string") value.timestamp = replayTs;
+        else if (agent === "cursor") {
+          value = mapStrings(value, (s) =>
+            s.replace(/<timestamp>[\s\S]*?<\/timestamp>/i, `<timestamp>${replayTs}</timestamp>`),
+          );
+        }
       }
     }
     if (isObject(value)) {
@@ -142,8 +165,13 @@ export function planReplay(
   if (agent === "codex") {
     return { agent, sessionId: session, file: rolloutPath(root, session, options.startMs), lines };
   }
-  const slug = cwd ? cwd.replace(/[^A-Za-z0-9]/g, "-") : "replay";
-  return { agent, sessionId: session, file: join(root, slug, `${session}.jsonl`), lines };
+  const replayCwd = options.cwd ?? cwd ?? recorded;
+  const slug = replayCwd?.replace(/^[\\/]+/, "").replace(/[^A-Za-z0-9]/g, "-") ?? "replay";
+  const file =
+    agent === "cursor"
+      ? join(root, slug, "agent-transcripts", session, `${session}.jsonl`)
+      : join(root, slug, `${session}.jsonl`);
+  return { agent, sessionId: session, file, lines };
 }
 
 /** Where Codex would put a new thread's rollout, by its start time (UTC here). */
@@ -177,9 +205,47 @@ export function recordedCwd(
   return undefined;
 }
 
+function recordedCursorCwd(
+  fixtureText: string,
+  rewrite: (s: string) => string,
+): string | undefined {
+  for (const raw of fixtureText.split(/\r?\n/)) {
+    if (raw.trim() === "") continue;
+    let record: unknown;
+    try {
+      record = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const cwd = findWorkingDirectory(record);
+    if (cwd) return rewrite(cwd);
+  }
+  return undefined;
+}
+
+function findWorkingDirectory(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const found = findWorkingDirectory(child);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (!isObject(value)) return undefined;
+  for (const key of ["working_directory", "cwd"]) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate !== "") return candidate;
+  }
+  for (const child of Object.values(value)) {
+    const found = findWorkingDirectory(child);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 /**
  * `baton replay`: writes a fixture into a fresh session log at its recorded
- * pace, so a watching daemon sees what looks like a live Claude Code or Codex
+ * pace, so a watching daemon sees what looks like a live Claude Code, Codex or Cursor
  * session.
  * Resolves when every line is written (or rejects with the signal's reason).
  */
@@ -191,6 +257,7 @@ export async function runReplay(options: ReplayOptions): Promise<ReplayPlan> {
   const plan = planReplay(text, {
     projectsDir: options.projectsDir,
     codexDir: options.codexDir,
+    cursorDir: options.cursorDir,
     speed: options.speed,
     as: options.as,
     maxGapMs: options.maxGapMs,

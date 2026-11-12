@@ -72,7 +72,7 @@ export async function runHandoffStart(
     return 1;
   }
   const { meta } = found;
-  const program = meta.agent === "codex" ? "codex" : "claude";
+  const program = meta.agent === "codex" ? "codex" : meta.agent === "cursor" ? "agent" : "claude";
   try {
     return await run(program, [handoffPrompt(meta.id, meta.patch)], input.dir);
   } catch (e) {

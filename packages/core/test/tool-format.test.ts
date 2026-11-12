@@ -38,7 +38,11 @@ describe("isOneLiner / summarizeText", () => {
 describe("summarizeToolCall", () => {
   it.each([
     ["Bash", { command: "ls -la\necho done" }, "Bash ls -la"],
+    ["Shell", { command: "ls -la\necho done" }, "Shell ls -la"],
     ["Read", { file_path: "/src/a.ts", offset: 10 }, "Read /src/a.ts"],
+    ["Write", { path: "/src/a.ts", contents: "export {}" }, "Write /src/a.ts"],
+    ["StrReplace", { path: "/src/a.ts" }, "StrReplace /src/a.ts"],
+    ["Delete", { path: "/src/a.ts" }, "Delete /src/a.ts"],
     ["Grep", { pattern: "TODO", path: "src" }, "Grep TODO in src"],
     ["Glob", { pattern: "**/*.ts" }, "Glob **/*.ts"],
     ["WebFetch", { url: "https://example.com" }, "WebFetch https://example.com"],
@@ -51,22 +55,29 @@ describe("summarizeToolCall", () => {
     expect(summarizeToolCall(name, input)).toBe(expected);
   });
 
-  it.each(["Bash", "Read", "Grep", "WebFetch", "WebSearch", "Agent"])(
-    "%s with its main argument missing or not a string",
-    (name) => {
-      expect(summarizeToolCall(name, {})).toBe(name);
-      expect(
-        summarizeToolCall(name, {
-          command: 1,
-          file_path: 1,
-          pattern: 1,
-          url: 1,
-          query: 1,
-          description: 1,
-        }),
-      ).toBe(name);
-    },
-  );
+  it.each([
+    "Bash",
+    "Shell",
+    "Read",
+    "StrReplace",
+    "Delete",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+    "Agent",
+  ])("%s with its main argument missing or not a string", (name) => {
+    expect(summarizeToolCall(name, {})).toBe(name);
+    expect(
+      summarizeToolCall(name, {
+        command: 1,
+        file_path: 1,
+        pattern: 1,
+        url: 1,
+        query: 1,
+        description: 1,
+      }),
+    ).toBe(name);
+  });
 });
 
 describe("summarizeToolResult", () => {

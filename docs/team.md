@@ -168,7 +168,7 @@ multi-machine tests use it to check what arrived.
 
 ## Simulating teammates
 
-`baton replay <fixture> [--projects-dir <dir>] [--codex-dir <dir>] [--speed n]
+`baton replay <fixture> [--projects-dir <dir>] [--codex-dir <dir>] [--cursor-dir <dir>] [--speed n]
 [--as name] [--max-gap s] [--seed text]` writes a session log into a fresh file,
 line by line at the pace of the
 recorded timestamps divided by `--speed`. Pauses longer than `--max-gap` (after
@@ -187,6 +187,8 @@ directory:
   `<dir>/YYYY/MM/DD/rollout-<time>-<new thread id>.jsonl` (UTC), as Codex
   names a new thread. A fixture that starts mid-thread (a segment file, such as
   `forked-frontend`) is written as a new thread's first file.
+- Cursor transcript → `--cursor-dir`, written under
+  `<dir>/<cwd slug>/agent-transcripts/<new conversation id>/<new conversation id>.jsonl`.
 
 ## Multi-machine tests
 

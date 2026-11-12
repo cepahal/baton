@@ -686,6 +686,11 @@ button {
   background: linear-gradient(180deg, #eef1f7, #dde3ee);
 }
 
+.agent-cursor {
+  color: #3654bf;
+  background: linear-gradient(180deg, #eff2ff, #dce3ff);
+}
+
 /* ---- live dot and connection ----------------------------------------------- */
 
 .live-dot {

@@ -3,7 +3,15 @@ import { join } from "node:path";
 import * as zlib from "node:zlib";
 import type { BatonEvent } from "@baton/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { belongsTo, logKey, logSources, sessionKey } from "../src/sources.js";
+import {
+  belongsTo,
+  cursorSessionInfo,
+  decodeCursorProjectSlug,
+  defaultSourceDir,
+  logKey,
+  logSources,
+  sessionKey,
+} from "../src/sources.js";
 import { StateStore } from "../src/state-store.js";
 import { TranscriptTail } from "../src/tail.js";
 import { TranscriptWatcher } from "../src/watcher.js";
@@ -74,14 +82,54 @@ describe("log sources", () => {
     expect(sources.map((s) => [s.agent, s.kind, s.dir])).toEqual([
       ["claude-code", "jsonl-tail", join(home, ".claude", "projects")],
       ["codex", "rollout-tail", join(home, ".codex", "sessions")],
+      ["cursor", "jsonl-tail", join(home, ".cursor", "projects")],
     ]);
     const custom = logSources({ codex: "/x" }, home);
     expect(custom.find((s) => s.agent === "codex")?.dir).toBe("/x");
+    expect(defaultSourceDir("cursor", home)).toBe(join(home, ".cursor", "projects"));
+  });
+
+  it("matches Cursor transcript paths and derives Windows, macOS and subagent identity", () => {
+    const source = logSources({ cursor: "/cursor" }).find((s) => s.agent === "cursor");
+    if (!source) throw new Error("missing Cursor source");
+    expect(decodeCursorProjectSlug("c-Users-alice-Projects-baton", "win32")).toBe(
+      String.raw`C:\Users\alice\Projects\baton`,
+    );
+    expect(decodeCursorProjectSlug("Users-alice-Projects-baton", "darwin")).toBe(
+      "/Users/alice/Projects/baton",
+    );
+    const slug =
+      process.platform === "win32" ? "c-Users-alice-Projects-baton" : "Users-alice-Projects-baton";
+    const expectedPath =
+      process.platform === "win32"
+        ? String.raw`C:\Users\alice\Projects\baton`
+        : "/Users/alice/Projects/baton";
+    const transcript = join("/cursor", slug, "agent-transcripts", "chat-1", "chat-1.jsonl");
+    expect(source.detect(transcript)).toBe(true);
+    expect(cursorSessionInfo(source, transcript)).toEqual({
+      sessionId: "chat-1",
+      projectPath: expectedPath,
+    });
+    const mac = join(
+      "/cursor",
+      "Users-alice-Projects-baton",
+      "agent-transcripts",
+      "parent",
+      "subagents",
+      "child.jsonl",
+    );
+    expect(cursorSessionInfo(source, mac)).toEqual({
+      sessionId: "child",
+      projectPath: "/Users/alice/Projects/baton",
+      parentSessionId: "parent",
+    });
+    expect(sessionKey(source, transcript)).toBe("cursor:chat-1");
+    expect(source.detect(join("/cursor", "notes.jsonl"))).toBe(false);
   });
 
   it("assigns files to sources and groups a Codex thread's segments", () => {
-    const [claude, codex] = logSources({ "claude-code": "/c", codex: "/x" });
-    if (!claude || !codex) throw new Error("missing source");
+    const [claude, codex, cursor] = logSources({ "claude-code": "/c", codex: "/x", cursor: "/u" });
+    if (!claude || !codex || !cursor) throw new Error("missing source");
     const base = join("/x", "2026", "11", "02", `rollout-2026-11-02T12-00-00-${THREAD}.jsonl`);
     const seg = join(
       "/x",
@@ -97,6 +145,12 @@ describe("log sources", () => {
     expect(belongsTo(claude, join("/c", "-proj", "s.jsonl"))).toBe(true);
     expect(sessionKey(codex, seg)).toBe(sessionKey(codex, base));
     expect(sessionKey(codex, `${base}.zst`)).toBe(sessionKey(codex, base));
+    expect(belongsTo(cursor, join("/u", "Users-a-work", "agent-transcripts", "id.jsonl"))).toBe(
+      true,
+    );
+    expect(belongsTo(claude, join("/c", "Users-a-work", "agent-transcripts", "id.jsonl"))).toBe(
+      false,
+    );
   });
 });
 
@@ -168,7 +222,11 @@ describe("TranscriptWatcher with Codex", () => {
   const watch = async (
     dirs: Awaited<ReturnType<typeof codexDirs>>,
     events: BatonEvent[],
-    sources = logSources({ "claude-code": dirs.projectsDir, codex: dirs.codexDir }),
+    sources = logSources({
+      "claude-code": dirs.projectsDir,
+      codex: dirs.codexDir,
+      cursor: dirs.cursorDir,
+    }),
   ) => {
     const state = await StateStore.load(dirs.stateFile, silent);
     watcher = new TranscriptWatcher({
@@ -231,7 +289,11 @@ describe("TranscriptWatcher with Codex", () => {
   it("refuses to start when no source directory exists", async () => {
     const dirs = await tempProjects();
     cleanup = dirs.cleanup;
-    const sources = logSources({ "claude-code": join(dirs.root, "nope"), codex: dirs.codexDir });
+    const sources = logSources({
+      "claude-code": join(dirs.root, "nope"),
+      codex: dirs.codexDir,
+      cursor: dirs.cursorDir,
+    });
     await expect(watch({ ...dirs, base: "", segment: "" }, [], sources)).rejects.toThrow(
       /no session log directory found/,
     );

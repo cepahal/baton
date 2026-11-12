@@ -153,7 +153,7 @@ baton start --server ws://<server-name>:7777 --name "<your name>"
 `--name` is what teammates see; it defaults to the OS username. Leave this
 terminal running while you want to share. Ctrl+C stops it.
 
-**Check:** it logs `connected to team server`. Start a Claude Code or Codex
+**Check:** it logs `connected to team server`. Start a Claude Code, Codex or Cursor
 session in a shared repo and send one message. Within a few seconds it appears
 in the viewer under your name. A session in a repo you didn't share never
 appears.

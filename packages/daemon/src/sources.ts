@@ -12,6 +12,12 @@ export type LogSource = {
   detect(path: string): boolean;
 };
 
+export type CursorSessionInfo = {
+  sessionId: string;
+  projectPath: string;
+  parentSessionId?: string;
+};
+
 /** Expands a registry root (`~/…`) against the home directory. */
 export function expandHome(root: string, home = homedir()): string {
   if (root === "~") return home;
@@ -53,7 +59,43 @@ export function sessionKey(source: LogSource, path: string): string {
     const name = parseRolloutName(path);
     if (name) return `${source.agent}:${name.threadId}`;
   }
+  if (source.agent === "cursor") return `cursor:${cursorSessionInfo(source, path).sessionId}`;
   return logKey(path);
+}
+
+/** Cursor's transcript records don't contain their conversation id or cwd. */
+export function cursorSessionInfo(source: LogSource, path: string): CursorSessionInfo {
+  const rel = relative(source.dir, path).replace(/\\/g, "/");
+  const parts = rel.split("/").filter(Boolean);
+  const transcriptIndex = parts.findIndex((part) => part.toLowerCase() === "agent-transcripts");
+  const transcriptParts = transcriptIndex < 0 ? [] : parts.slice(transcriptIndex + 1);
+  const leaf = transcriptParts.at(-1) ?? path.split(/[\\/]/).at(-1) ?? "cursor-session.jsonl";
+  const sessionId = leaf.replace(/\.jsonl$/i, "") || "cursor-session";
+  const parentSessionId =
+    transcriptParts.length >= 3 && transcriptParts.at(-2)?.toLowerCase() === "subagents"
+      ? transcriptParts.at(-3)
+      : undefined;
+  const projectSlug = transcriptIndex > 0 ? parts[transcriptIndex - 1] : parts[0];
+  return {
+    sessionId,
+    projectPath: decodeCursorProjectSlug(projectSlug ?? ""),
+    ...(parentSessionId ? { parentSessionId } : {}),
+  };
+}
+
+/** Decodes the folder Cursor uses for a workspace under `~/.cursor/projects`. */
+export function decodeCursorProjectSlug(
+  slug: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === "win32") {
+    const drive = /^([a-z])-(.*)$/i.exec(slug);
+    if (drive?.[1] && drive[2]) {
+      const path = drive[2].replace(/-/g, "\\");
+      return `${drive[1].toUpperCase()}:\\${path}`;
+    }
+  }
+  return `/${slug.replace(/^-+/, "").replace(/-/g, "/")}`;
 }
 
 /** State-store key of one log file; a `.zst` shares its original's key. */

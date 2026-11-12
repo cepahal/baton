@@ -1,4 +1,4 @@
-import type { BatonEvent } from "@baton/core";
+import { type BatonEvent, PROTOCOL_VERSION } from "@baton/core";
 import { describe, expect, it } from "vitest";
 import { backoffDelay } from "../src/lib/backoff.js";
 import {
@@ -114,7 +114,13 @@ describe("ConnectionManager", () => {
     return { sockets, timers, backoffs, received, manager };
   }
   const send = (h: SocketHandlers, msg: unknown) => h.onMessage(JSON.stringify(msg));
-  const hello = (epoch: string) => ({ type: "hello", protocol: 1, epoch, seq: 0, session: "all" });
+  const hello = (epoch: string) => ({
+    type: "hello",
+    protocol: PROTOCOL_VERSION,
+    epoch,
+    seq: 0,
+    session: "all",
+  });
 
   it("resumes with lastSeq and epoch after a drop, with growing backoff", () => {
     const { sockets, backoffs, received, manager } = setup();

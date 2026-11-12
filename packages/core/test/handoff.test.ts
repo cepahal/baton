@@ -257,6 +257,8 @@ describe("the command a receiver runs", () => {
     expect(handoffCommand("claude-code", String.raw`C:\My Repo\ `.trim(), "go")).toBe(
       String.raw`cd "C:\My Repo" && claude "go"`,
     );
+    expect(handoffCommand("cursor", "/work/shop", "go")).toBe('cd /work/shop && agent "go"');
+    expect(handoffCommand("unknown", "/work/shop", "go")).toBe('cd /work/shop && claude "go"');
   });
 
   it("escapes everything sh would interpret in a POSIX folder", () => {

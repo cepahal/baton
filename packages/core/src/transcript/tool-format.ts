@@ -36,12 +36,18 @@ function shortArgs(name: string, input: Record<string, JsonValue>, cwd?: string)
   switch (name) {
     case "Bash":
     case "PowerShell":
+    case "Shell":
       return str(input.command)?.split("\n")[0] ?? "";
     case "Read":
     case "Write":
     case "Edit":
     case "NotebookEdit": {
-      const path = str(input.file_path) ?? str(input.notebook_path);
+      const path = str(input.file_path) ?? str(input.path) ?? str(input.notebook_path);
+      return path ? displayPath(path, cwd) : "";
+    }
+    case "StrReplace":
+    case "Delete": {
+      const path = str(input.path) ?? str(input.file_path);
       return path ? displayPath(path, cwd) : "";
     }
     case "Grep":
@@ -132,6 +138,7 @@ function resultLine(text: string, nonText: number, ctx: ToolResultContext): stri
   if (name === "Bash" || name === "PowerShell") {
     return shellOutcome(name, text, ctx.isError ?? false);
   }
+  if (name === "Shell") return shellOutcome(name, text, ctx.isError ?? false);
 
   const args = shortArgs(name, input, ctx.cwd);
   const head = args ? `${name} ${args}` : name;
@@ -144,11 +151,12 @@ function resultLine(text: string, nonText: number, ctx: ToolResultContext): stri
       return `${head} (${plural(numbered || nonEmptyLines(text).length, "line")})`;
     }
     case "Write": {
-      const content = str(input.content);
+      const content = str(input.content) ?? str(input.contents);
       if (content === undefined) return `${head} → ok`;
       return `${head} (${plural(content.split(/\r?\n/).length, "line")})`;
     }
     case "Edit":
+    case "StrReplace":
     case "NotebookEdit":
       return `${head} → ok`;
     case "Grep":

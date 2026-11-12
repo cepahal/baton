@@ -35,6 +35,10 @@ you, say so in an issue anyway: it tells us what to fix first.
   Notes, handoffs, canvas positions and deleted-session ids are kept on disk.
 - **Memory caps.** The server keeps about 256 MB of events (`--buffer-mb`); past
   that the oldest are dropped and a gap shows in long-running sessions.
+- **Cursor transcript detail depends on what Cursor writes locally.** Baton reads
+  the JSONL transcript, which can contain prompts, replies and tool calls while
+  omitting tool results or reasoning. Cursor's on-disk format is not versioned
+  as a public schema and may change.
 - **Backups cover the server's files, not events**, and are kept 7 days. To
   restore: stop `baton serve`, copy the files from a folder in
   `<state>/backups/<time>/` back into `<state>/`, copy the files it lists in

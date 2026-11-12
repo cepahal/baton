@@ -1,10 +1,10 @@
 import { stat } from "node:fs/promises";
 import {
+  type AdapterOptions,
   type AgentAdapter,
   type AgentId,
   type BatonEvent,
   createAdapter,
-  type ParserOptions,
 } from "@baton/core";
 import { LineBuffer } from "./lines.js";
 import {
@@ -31,7 +31,7 @@ export type PartOptions = {
 export type TailOptions = PartOptions & {
   /** Which adapter parses the lines. Default `claude-code`. */
   agent?: AgentId;
-  parser?: ParserOptions;
+  parser?: AdapterOptions;
 };
 
 export type CatchUpResult = {
@@ -72,7 +72,7 @@ type Opened = { log: LogFile } | { gone: true } | { skip: true };
  */
 export class TranscriptTail {
   readonly agent: AgentId;
-  readonly #parserOptions: ParserOptions;
+  readonly #parserOptions: AdapterOptions;
   readonly #parts: Part[] = [];
   #adapter: AgentAdapter;
   #warm = true;
@@ -110,6 +110,20 @@ export class TranscriptTail {
 
   get warm(): boolean {
     return this.#warm;
+  }
+
+  /** Cursor may rewrite a transcript at a checkpoint instead of appending. */
+  rereadCursorHistory(): void {
+    if (this.agent !== "cursor") return;
+    const wasWarm = this.#warm;
+    this.#adapter = createAdapter(this.agent, this.#parserOptions);
+    this.#warm = wasWarm;
+    for (const part of this.#parts) {
+      part.offset = 0;
+      part.ino = undefined;
+      part.sealed = false;
+      part.lines.reset();
+    }
   }
 
   /** Is `path` (or its compressed / uncompressed twin) one of this session's files? */

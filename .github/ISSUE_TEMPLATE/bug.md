@@ -27,7 +27,7 @@ token, key-like strings and your home folder already removed.
 **Your setup**
 
 - OS: <!-- macOS 15 / Windows 11 -->
-- Agent: <!-- Claude Code / Codex, and version -->
+- Agent: <!-- Claude Code / Codex / Cursor, and version -->
 - Role: <!-- team server / teammate daemon / both -->
 - `baton doctor` output: <!-- paste, or "all ✓" -->
 

@@ -16,7 +16,7 @@ export const HANDOFF_SNIPPET_MAX_BYTES = 16 * 1024;
 export const SUMMARIZER_INPUT_MAX_BYTES = 150 * 1024;
 const LIST_MAX = 5;
 
-const AGENT_NAMES = { "claude-code": "Claude Code", codex: "Codex" } as const;
+const AGENT_NAMES = { "claude-code": "Claude Code", codex: "Codex", cursor: "Cursor" } as const;
 
 /** What the summarizer must answer: the template minus `filesTouched`. */
 export const SummarizerReply = z.object({
@@ -230,5 +230,6 @@ export function shellFolder(folder: string): string {
 
 /** `cd <folder> && claude "<prompt>"`: what the receiver runs to pick the work up. */
 export function handoffCommand(agent: string, folder: string, prompt: string): string {
-  return `cd ${shellFolder(folder)} && ${agent === "codex" ? "codex" : "claude"} "${prompt}"`;
+  const command = agent === "codex" ? "codex" : agent === "cursor" ? "agent" : "claude";
+  return `cd ${shellFolder(folder)} && ${command} "${prompt}"`;
 }

@@ -6,4 +6,4 @@ export const BATON_VERSION = "0.1.0-beta.1";
  * change means an older daemon or server can't talk to a newer one; both sides
  * refuse a mismatch with a "please update" error instead of failing quietly.
  */
-export const INGEST_PROTOCOL_VERSION = 2;
+export const INGEST_PROTOCOL_VERSION = 3;

@@ -60,11 +60,16 @@ describe("Sidebar", () => {
   });
 
   it("marks each session with its agent's icon", () => {
-    const html = render([session("c1"), session("x1", undefined, "codex")]);
+    const html = render([
+      session("c1"),
+      session("x1", undefined, "codex"),
+      session("u1", undefined, "cursor"),
+    ]);
     expect(html).toContain(
       'class="agent-icon agent-claude-code" role="img" aria-label="Claude Code"',
     );
     expect(html).toContain('class="agent-icon agent-codex" role="img" aria-label="Codex"');
+    expect(html).toContain('class="agent-icon agent-cursor" role="img" aria-label="Cursor"');
   });
 
   it("lets sessions be dragged but not clicked onto the canvas", () => {

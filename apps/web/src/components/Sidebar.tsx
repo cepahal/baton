@@ -35,7 +35,7 @@ export function Sidebar(props: Props) {
       {props.error && <p className="sidebar-note is-error">{props.error}</p>}
       {props.loaded && sessions.length === 0 && !props.error && (
         <p className="sidebar-note">
-          No sessions yet. Start Claude Code or Codex anywhere and it shows up here.
+          No sessions yet. Start Claude Code, Codex or Cursor anywhere and it shows up here.
         </p>
       )}
       <div className="session-groups">

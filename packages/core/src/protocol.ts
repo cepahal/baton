@@ -13,7 +13,7 @@ import {
 import { Note, NoteId } from "./notes/schema.js";
 
 /** Wire protocol between a Baton hub and its viewers. See docs/spec.md. */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Hub sequence number: monotonic across all sessions within one hub epoch. */
 const HubSeq = z.number().int().nonnegative();

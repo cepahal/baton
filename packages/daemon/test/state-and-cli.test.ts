@@ -89,6 +89,7 @@ describe("parseCli", () => {
     expect(r.config.port).toBe(DEFAULT_PORT);
     expect(r.config.projectsDir).toMatch(/[\\/]\.claude[\\/]projects$/);
     expect(r.config.codexDir).toMatch(/[\\/]\.codex[\\/]sessions$/);
+    expect(r.config.cursorDir).toMatch(/[\\/]\.cursor[\\/]projects$/);
     expect(r.config.backlog).toBe("all");
     expect(r.config.bufferMb).toBe(DEFAULT_BUFFER_MB);
     expect(r.config.bufferSize).toBeUndefined();
@@ -102,6 +103,8 @@ describe("parseCli", () => {
       dirs.projectsDir,
       "--codex-dir",
       dirs.codexDir,
+      "--cursor-dir",
+      dirs.cursorDir,
       "--state-file",
       dirs.stateFile,
       "--backlog",
@@ -126,6 +129,7 @@ describe("parseCli", () => {
         port: 7001,
         projectsDir: dirs.projectsDir,
         codexDir: dirs.codexDir,
+        cursorDir: dirs.cursorDir,
         stateFile: dirs.stateFile,
         backlog: 5,
         bufferMb: 64,

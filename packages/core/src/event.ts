@@ -15,7 +15,7 @@ export const BatonEventKind = z.enum(BATON_EVENT_KINDS);
 export type BatonEventKind = z.infer<typeof BatonEventKind>;
 
 /** Coding agents Baton can read. See "Agents and sources" in docs/spec.md. */
-export const AGENT_IDS = ["claude-code", "codex"] as const;
+export const AGENT_IDS = ["claude-code", "codex", "cursor"] as const;
 
 export const AgentId = z.enum(AGENT_IDS);
 export type AgentId = z.infer<typeof AgentId>;

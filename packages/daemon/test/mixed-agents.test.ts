@@ -1,6 +1,6 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type BatonEvent, parseSession, SessionsResponse } from "@baton/core";
+import { type BatonEvent, createAdapter, parseSession, SessionsResponse } from "@baton/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Daemon } from "../src/daemon.js";
 import { type ReplayPlan, runReplay } from "../src/replay.js";
@@ -8,7 +8,7 @@ import { silent, start, TestClient, tempProjects, wsUrl } from "./helpers.js";
 
 const FIXTURES = join(import.meta.dirname, "../../core/test/fixtures");
 
-/** Two Claude Code sessions and two Codex threads, written at the same time. */
+/** Claude Code sessions, Codex threads and a Cursor conversation, written together. */
 const REPLAYS = [
   { fixture: "heavy-tools.jsonl", as: "alice" },
   { fixture: "codex/speech-tool.rollout.jsonl", as: "bob" },
@@ -22,6 +22,8 @@ let client: TestClient | undefined;
 
 beforeEach(async () => {
   dirs = await tempProjects();
+  // The daemon only watches source roots that exist at startup.
+  await mkdir(dirs.cursorDir, { recursive: true });
   // Today's rollout folder, where the replays write (UTC, like rolloutPath).
   // Made up front so the watcher sees it from the start: a folder appearing
   // mid-test is noticed late on a loaded machine, and the Codex replays then
@@ -38,14 +40,50 @@ afterEach(async () => {
   await dirs.cleanup();
 });
 
-describe("Claude Code and Codex sessions at once", () => {
-  it("streams every event of both agents' live sessions exactly once, in order", async () => {
+describe("Claude Code, Codex and Cursor sessions at once", () => {
+  it("streams every event from all three agents exactly once, in order", async () => {
     daemon = await start(dirs);
     client = new TestClient(wsUrl(daemon));
     await client.opened;
 
-    const plans: ReplayPlan[] = await Promise.all(
-      REPLAYS.map((r) =>
+    const cursorCwd =
+      process.platform === "win32" ? String.raw`C:\Users\dev\cursor` : "/home/dev/cursor";
+    const cursorFixture = join(dirs.root, "cursor-fixture.jsonl");
+    await writeFile(
+      cursorFixture,
+      [
+        JSON.stringify({
+          role: "user",
+          message: {
+            content:
+              "<timestamp>Thursday, Jul 23, 2026, 11:20 PM (UTC+2)</timestamp>\n<user_query>Say hello</user_query>",
+          },
+        }),
+        JSON.stringify({
+          role: "assistant",
+          message: {
+            content: [
+              { type: "text", text: "I’ll check the current folder." },
+              {
+                type: "tool_use",
+                name: "Shell",
+                input: { command: "pwd", working_directory: cursorCwd },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          role: "user",
+          message: {
+            content:
+              "<timestamp>Thursday, Jul 23, 2026, 11:21 PM (UTC+2)</timestamp>\n<user_query>Now say goodbye</user_query>",
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const plans: ReplayPlan[] = await Promise.all([
+      ...REPLAYS.map((r) =>
         runReplay({
           fixture: join(FIXTURES, r.fixture),
           projectsDir: dirs.projectsDir,
@@ -60,14 +98,39 @@ describe("Claude Code and Codex sessions at once", () => {
           logger: silent,
         }),
       ),
-    );
-    expect(plans.map((p) => p.agent)).toEqual(["claude-code", "codex", "claude-code", "codex"]);
+      runReplay({
+        fixture: cursorFixture,
+        cursorDir: dirs.cursorDir,
+        speed: 100,
+        maxGapMs: 40,
+        as: "eve",
+        seed: "eve",
+        logger: silent,
+      }),
+    ]);
+    expect(plans.map((p) => p.agent)).toEqual([
+      "claude-code",
+      "codex",
+      "claude-code",
+      "codex",
+      "cursor",
+    ]);
 
     // What the parser makes of each written file is what the viewer must get.
     const expected = new Map<string, BatonEvent[]>();
     for (const plan of plans) {
-      const { events } = parseSession(plan.agent, await readFile(plan.file, "utf8"));
-      expect(events.length).toBeGreaterThan(10);
+      const raw = await readFile(plan.file, "utf8");
+      let events: BatonEvent[];
+      if (plan.agent === "cursor") {
+        const parser = createAdapter("cursor", {
+          sessionId: plan.sessionId,
+          projectPath: cursorCwd,
+        });
+        events = raw.split(/\r?\n/).flatMap((line) => parser.parse(line));
+      } else {
+        events = parseSession(plan.agent, raw).events;
+      }
+      expect(events.length).toBeGreaterThan(plan.agent === "cursor" ? 2 : 10);
       expected.set(plan.sessionId, events);
     }
     const total = [...expected.values()].reduce((n, e) => n + e.length, 0);
@@ -90,15 +153,20 @@ describe("Claude Code and Codex sessions at once", () => {
         want.map((e) => [e.seq, e.id, e.kind, e.agent]),
       );
     }
-    // The two agents' sessions really did overlap in time.
-    const firstLast = plans.map((p) => {
+    // Sessions from all three agents really did overlap in time.
+    const ranges = plans.map((p) => {
       const idx = received.flatMap((m, i) => (m.event.sessionId === p.sessionId ? [i] : []));
-      return [idx[0] ?? -1, idx.at(-1) ?? -1] as const;
+      return { agent: p.agent, range: [idx[0] ?? -1, idx.at(-1) ?? -1] as const };
     });
-    const [claudeA, codexA] = firstLast;
-    if (!claudeA || !codexA) throw new Error("missing replay");
-    expect(codexA[0]).toBeLessThan(claudeA[1]);
-    expect(claudeA[0]).toBeLessThan(codexA[1]);
+    const overlaps = (a: readonly [number, number], b: readonly [number, number]) =>
+      a[0] <= b[1] && b[0] <= a[1];
+    const claudeRanges = ranges.filter((r) => r.agent === "claude-code").map((r) => r.range);
+    const codexRanges = ranges.filter((r) => r.agent === "codex").map((r) => r.range);
+    const cursorRange = ranges.find((r) => r.agent === "cursor")?.range;
+    if (!cursorRange) throw new Error("missing Cursor replay");
+    expect(claudeRanges.some((r) => codexRanges.some((s) => overlaps(r, s)))).toBe(true);
+    expect(claudeRanges.some((r) => overlaps(r, cursorRange))).toBe(true);
+    expect(codexRanges.some((r) => overlaps(r, cursorRange))).toBe(true);
 
     const res = await fetch(`${daemon.url}/sessions`);
     const { sessions } = SessionsResponse.parse(await res.json());

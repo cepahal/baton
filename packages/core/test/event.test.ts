@@ -28,8 +28,12 @@ describe("BatonEvent", () => {
     expect(BatonEvent.parse(rest).agent).toBe("claude-code");
   });
 
+  it("accepts Cursor events", () => {
+    expect(BatonEvent.parse({ ...valid, agent: "cursor" }).agent).toBe("cursor");
+  });
+
   it("rejects an unknown agent", () => {
-    expect(BatonEvent.safeParse({ ...valid, agent: "cursor" }).success).toBe(false);
+    expect(BatonEvent.safeParse({ ...valid, agent: "unknown-agent" }).success).toBe(false);
   });
 
   it("rejects an unknown kind", () => {

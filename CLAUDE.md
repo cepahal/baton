@@ -1,7 +1,8 @@
 # Baton
 
-Baton streams live Claude Code sessions to teammates. It tails the JSONL
-transcripts Claude Code writes under `~/.claude/projects/`, turns each record
+Baton streams live Claude Code, Codex and Cursor sessions to teammates. It tails the JSONL
+transcripts Claude Code writes under `~/.claude/projects/`, Codex rollouts under
+`~/.codex/sessions/`, and Cursor agent transcripts under `~/.cursor/projects/`, turns each record
 into zero or more `BatonEvent`s, and pushes them to viewers.
 
 Two views of the same events: the **full-fidelity** stream teammates watch

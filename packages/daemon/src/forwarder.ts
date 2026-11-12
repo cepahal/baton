@@ -197,7 +197,11 @@ Pair your browser with this machine to accept handoffs (link works once, for 10 
   }
   dirs = new SessionDirs(new RepoTaggingSink(sink, resolver));
   const watcher = new TranscriptWatcher({
-    sources: logSources({ "claude-code": config.projectsDir, codex: config.codexDir }),
+    sources: logSources({
+      "claude-code": config.projectsDir,
+      codex: config.codexDir,
+      cursor: config.cursorDir,
+    }),
     sink: new SharingSink(dirs, sharing, logger.child({ component: "sharing" })),
     state,
     logger: logger.child({ component: "watcher" }),

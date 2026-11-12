@@ -1,6 +1,6 @@
 # baton
 
-Baton streams your team's live Claude Code and Codex sessions to a shared
+Baton streams your team's live Claude Code, Codex and Cursor sessions to a shared
 canvas: see what everyone's agents are doing, leave sticky notes, and hand work
 from one session to another.
 
@@ -25,8 +25,8 @@ Two step-by-step guides, written to hand to your coding agent:
 ## How it fits together
 
 ```
-your machine:  Claude Code / Codex ──▶ baton start --server ─┐
-teammate's:    Claude Code / Codex ──▶ baton start --server ─┤  (over Tailscale)
+your machine:  Claude Code / Codex / Cursor ──▶ baton start --server ─┐
+teammate's:    Claude Code / Codex / Cursor ──▶ baton start --server ─┤  (over Tailscale)
                                                               ▼
                               one machine: baton serve ──▶ browsers (everyone)
 ```
@@ -122,7 +122,7 @@ Open `http://<server-name>:7777/` and sign in with the team token.
 | `baton start` (no `--server`)  | A private viewer on `http://127.0.0.1:7777/` for this machine only         |
 | `baton pair --server <url>`    | Print a one-time link that pairs a browser with this machine (10 minutes)  |
 | `baton handoff apply <id>`     | Apply an accepted handoff's `changes.patch` on a new branch                |
-| `baton handoff start <id>`     | Start Claude Code / Codex here with an accepted handoff's prompt           |
+| `baton handoff start <id>`     | Start Claude Code / Codex / Cursor here with an accepted handoff's prompt  |
 
 `--name` defaults to your OS username. If two teammates have the same one, the
 second is refused with a message asking for `--name`.

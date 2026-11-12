@@ -5,7 +5,7 @@ import { HANDOFF_MARKDOWN_MAX } from "./schema.js";
 /** Room kept under the markdown cap for the header and the "omitted" line. */
 const HEADER_ROOM = 2 * 1024;
 
-const AGENT_NAMES = { "claude-code": "Claude Code", codex: "Codex" } as const;
+const AGENT_NAMES = { "claude-code": "Claude Code", codex: "Codex", cursor: "Cursor" } as const;
 
 /** One compacted event as markdown, or undefined for events a reader doesn't need. */
 function renderEvent(e: BatonEvent): string | undefined {

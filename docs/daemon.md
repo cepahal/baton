@@ -1,12 +1,12 @@
 # Baton daemon (v0)
 
-`baton start` tails Claude Code transcripts and Codex rollouts and streams their `BatonEvent`s
+`baton start` tails Claude Code transcripts, Codex rollouts and Cursor transcripts and streams their `BatonEvent`s
 (see [spec.md](spec.md)) to local viewers over WebSocket. It listens on
 `127.0.0.1` only.
 
 ```sh
 pnpm build
-pnpm baton start [--port 7777] [--projects-dir ~/.claude/projects] [--codex-dir ~/.codex/sessions]
+pnpm baton start [--port 7777] [--projects-dir ~/.claude/projects] [--codex-dir ~/.codex/sessions] [--cursor-dir ~/.cursor/projects]
 npx wscat -c ws://127.0.0.1:7777/ws
 ```
 
@@ -34,7 +34,7 @@ TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local)
   directory for 60 s; see [Repo identity](#repo-identity-and-domain)).
 - `src/sources.ts`: one `LogSource { agent, kind, dir, detect }` per entry in
   core's `AGENT_REGISTRY`; which files belong to which session (a Codex thread's
-  segment files share one).
+  segment files share one, and Cursor conversation ids come from transcript paths).
 - `src/watcher.ts`: chokidar over every source's dir (any depth), files
   filtered by the adapter's `detect`.
 - `src/tail.ts`: one session's files (usually one), each with its byte offset,
@@ -61,8 +61,9 @@ TranscriptWatcher ──publish(events)──▶ EventSink ◀── Hub (local)
 
 ## Watching
 
-- **Sources.** The Claude Code (`--projects-dir`) and Codex (`--codex-dir`)
-  directories come from the core adapter registry. A missing directory is
+- **Sources.** Claude Code (`--projects-dir`), Codex (`--codex-dir`) and Cursor
+  (`--cursor-dir`) directories come from the core adapter registry. Cursor's
+  default root is `~/.cursor/projects` on both macOS and Windows. A missing directory is
   skipped; the daemon refuses to start only if none exists. Codex specifics
   (segments, `.zst`) are in [spec.md](spec.md#codex-adapter-codex) and
   [codex-source.md](codex-source.md).
@@ -156,7 +157,7 @@ code 1013. An invalid query closes it with 1008.
 ## HTTP
 
 - `GET /sessions` → `{ sessions: [{ sessionId, agent, projectPath, projectName,
-  lastActivity, events, source? }] }`. `agent` (`claude-code` or `codex`) comes
+  lastActivity, events, source? }] }`. `agent` (`claude-code`, `codex` or `cursor`) comes
   from the session's first event; clients default it to `claude-code` when an
   older server leaves it out. These are sessions the hub received an event for
   within `--active-minutes`, newest `lastActivity` (transcript `ts`) first.

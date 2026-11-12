@@ -270,6 +270,7 @@ describe("team server", () => {
       port: 0,
       projectsDir: dirs.projectsDir,
       codexDir: dirs.codexDir,
+      cursorDir: dirs.cursorDir,
       stateFile: dirs.stateFile,
       backlog: "all" as const,
       bufferMb: 1,

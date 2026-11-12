@@ -17,20 +17,27 @@ const MAX_FIELDS = 200;
 export type WrittenText = { path: string; text: string; whole: boolean };
 
 /**
- * Text a tool call wrote: Claude Write content, Edit/MultiEdit replacements,
- * Codex added files and the added lines of Codex diffs.
+ * Text a tool call wrote: Claude/Cursor writes and replacements, Codex added
+ * files and the added lines of Codex diffs.
  */
 export function writtenTexts(event: BatonEvent): WrittenText[] {
   if (event.kind !== "tool_call") return [];
   const input = asRecord(event.meta?.input);
   if (!input) return [];
-  const path = typeof input.file_path === "string" ? input.file_path : undefined;
+  const path = stringField(input, "file_path") ?? stringField(input, "path");
   switch (event.meta?.toolName) {
     case "Write":
-      return path && typeof input.content === "string"
-        ? [{ path, text: input.content, whole: true }]
+      return path && (stringField(input, "content") ?? stringField(input, "contents")) !== undefined
+        ? [
+            {
+              path,
+              text: stringField(input, "content") ?? stringField(input, "contents") ?? "",
+              whole: true,
+            },
+          ]
         : [];
     case "Edit":
+    case "StrReplace":
       return path && typeof input.new_string === "string"
         ? [{ path, text: input.new_string, whole: false }]
         : [];
@@ -364,4 +371,9 @@ function goKind(t: string): FieldKind {
 
 function asRecord(v: JsonValue | undefined): Record<string, JsonValue> | undefined {
   return typeof v === "object" && v !== null && !Array.isArray(v) ? v : undefined;
+}
+
+function stringField(record: Record<string, JsonValue>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
 }

@@ -330,4 +330,5 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-const agentName = (agent: string) => (agent === "codex" ? "Codex" : "Claude Code");
+const agentName = (agent: string) =>
+  agent === "codex" ? "Codex" : agent === "cursor" ? "Cursor" : "Claude Code";

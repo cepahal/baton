@@ -101,7 +101,11 @@ export async function startDaemon(
   port = typeof address === "object" && address ? address.port : config.port;
 
   const watcher = new TranscriptWatcher({
-    sources: logSources({ "claude-code": config.projectsDir, codex: config.codexDir }),
+    sources: logSources({
+      "claude-code": config.projectsDir,
+      codex: config.codexDir,
+      cursor: config.cursorDir,
+    }),
     sink: new RepoTaggingSink(hub, new RepoResolver()),
     state,
     logger: logger.child({ component: "watcher" }),

@@ -30,7 +30,11 @@ describe("TranscriptWatcher startup", () => {
     let created = false;
     const events: BatonEvent[] = [];
     watcher = new TranscriptWatcher({
-      sources: logSources({ "claude-code": dirs.projectsDir, codex: dirs.codexDir }),
+      sources: logSources({
+        "claude-code": dirs.projectsDir,
+        codex: dirs.codexDir,
+        cursor: dirs.cursorDir,
+      }),
       sink: { publish: (e) => void events.push(...e) },
       state: await StateStore.load(dirs.stateFile, silent),
       logger: silent,
@@ -75,7 +79,11 @@ describe("TranscriptWatcher startup", () => {
     }
     const events: BatonEvent[] = [];
     watcher = new TranscriptWatcher({
-      sources: logSources({ "claude-code": dirs.projectsDir, codex: dirs.codexDir }),
+      sources: logSources({
+        "claude-code": dirs.projectsDir,
+        codex: dirs.codexDir,
+        cursor: dirs.cursorDir,
+      }),
       sink: { publish: (e) => void events.push(...e) },
       state: await StateStore.load(dirs.stateFile, silent),
       logger: silent,
@@ -99,7 +107,11 @@ describe("TranscriptWatcher startup", () => {
     );
     const events: BatonEvent[] = [];
     watcher = new TranscriptWatcher({
-      sources: logSources({ "claude-code": dirs.projectsDir, codex: dirs.codexDir }),
+      sources: logSources({
+        "claude-code": dirs.projectsDir,
+        codex: dirs.codexDir,
+        cursor: dirs.cursorDir,
+      }),
       sink: { publish: (e) => void events.push(...e) },
       state: await StateStore.load(dirs.stateFile, silent),
       logger: silent,

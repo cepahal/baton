@@ -10,6 +10,7 @@ import {
   DEFAULT_RECENT,
   DEFAULT_SUMMARIZER_MODEL,
   defaultCodexDir,
+  defaultCursorDir,
   defaultDaemonName,
   defaultProjectsDir,
   defaultStateFile,
@@ -30,7 +31,7 @@ import { startTeamServer } from "./team-server.js";
 export const USAGE = `Usage:
   baton start [options]           Stream this machine's sessions (locally, or to a team server)
   baton serve [options]           Run a team server: hub + viewer for several daemons
-  baton replay <fixture> [options]  Write a Claude Code or Codex log into a watched dir at its recorded pace
+  baton replay <fixture> [options]  Write a Claude Code, Codex or Cursor log into a watched dir
 
   baton share [dir]               Share sessions in this repo (or folder) with the team server
   baton unshare [dir]             Stop sharing it
@@ -42,17 +43,18 @@ export const USAGE = `Usage:
                                   so it can accept handoffs sent here (start --server prints one too)
   baton handoff apply <id>        In the folder a handoff was accepted into: put the sender's
                                   changes.patch on a new branch baton/handoff-<id> (git apply --3way)
-  baton handoff start <id>        Start Claude Code or Codex here with the handoff's prompt
+  baton handoff start <id>        Start Claude Code, Codex or Cursor here with the handoff's prompt
   baton --version
 
 Nothing is sent to a team server until you \`baton share\` a repo. See
 docs/what-baton-shares.md.
 
-baton start: watches Claude Code and Codex sessions and serves them on
+baton start: watches Claude Code, Codex and Cursor sessions and serves them on
 http://127.0.0.1:<port>, or with --server sends them to a team server.
   --port <n>            Port to listen on (default ${DEFAULT_PORT})
   --projects-dir <dir>  Claude Code transcripts (default ~/.claude/projects)
   --codex-dir <dir>     Codex session logs (default ~/.codex/sessions)
+  --cursor-dir <dir>    Cursor transcript logs (default ~/.cursor/projects)
   --state-file <file>   Where read offsets are saved
   --backlog <n|all>     History events sent per session (default all)
   --buffer-mb <n>       Memory for events kept for viewers (default ${DEFAULT_BUFFER_MB})
@@ -87,9 +89,10 @@ Environment (start and serve):
                                    notification (default), opening its page in the
                                    browser, or nothing
 
-baton replay <fixture>: a Claude Code transcript or a Codex rollout (detected from its contents)
+baton replay <fixture>: a Claude Code transcript, Codex rollout or Cursor transcript (detected from its contents)
   --projects-dir <dir>  Claude Code projects directory a daemon is watching (for Claude Code fixtures)
   --codex-dir <dir>     Codex sessions directory a daemon is watching (for Codex fixtures)
+  --cursor-dir <dir>    Cursor projects directory a daemon is watching (for Cursor fixtures)
   --speed <n>|<n>x      Play n times faster than recorded, e.g. 1x or 10x (default 1x)
   --as <name>           Simulated user: username in paths, and the run's label (default replay)
   --cwd <dir>           Play the session as if it ran in <dir> (replaces its recorded working directory)
@@ -127,6 +130,7 @@ const ReplayArgs = z.object({
   fixture: z.string().min(1),
   projectsDir: z.string().min(1).optional(),
   codexDir: z.string().min(1).optional(),
+  cursorDir: z.string().min(1).optional(),
   speed: z
     .string()
     .regex(/^\d+(\.\d+)?x?$/i, "a number like 1, 10 or 10x")
@@ -180,6 +184,7 @@ export function parseCli(
           port: values.port,
           projectsDir: values["projects-dir"],
           codexDir: values["codex-dir"],
+          cursorDir: values["cursor-dir"],
           stateFile: values["state-file"],
           backlog: values.backlog,
           bufferMb: values["buffer-mb"],
@@ -208,6 +213,7 @@ export function parseCli(
         const misplaced = firstSet(values, [
           "projects-dir",
           "codex-dir",
+          "cursor-dir",
           "state-file",
           "backlog",
           "poll",
@@ -254,13 +260,21 @@ export function parseCli(
         const [fixture, ...extra] = rest;
         if (fixture === undefined) return { command: "error", message: "replay needs a fixture" };
         if (extra.length > 0) return unexpected(extra[0]);
-        if (values["projects-dir"] === undefined && values["codex-dir"] === undefined) {
-          return { command: "error", message: "replay needs --projects-dir or --codex-dir" };
+        if (
+          values["projects-dir"] === undefined &&
+          values["codex-dir"] === undefined &&
+          values["cursor-dir"] === undefined
+        ) {
+          return {
+            command: "error",
+            message: "replay needs --projects-dir, --codex-dir or --cursor-dir",
+          };
         }
         const args = ReplayArgs.parse({
           fixture,
           projectsDir: values["projects-dir"],
           codexDir: values["codex-dir"],
+          cursorDir: values["cursor-dir"],
           speed: values.speed,
           as: values.as,
           cwd: values.cwd,
@@ -274,6 +288,7 @@ export function parseCli(
             fixture: args.fixture,
             ...(args.projectsDir === undefined ? {} : { projectsDir: args.projectsDir }),
             ...(args.codexDir === undefined ? {} : { codexDir: args.codexDir }),
+            ...(args.cursorDir === undefined ? {} : { cursorDir: args.cursorDir }),
             speed: args.speed,
             as: args.as,
             ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
@@ -315,6 +330,7 @@ function parse(argv: readonly string[]) {
       host: { type: "string" },
       "projects-dir": { type: "string" },
       "codex-dir": { type: "string" },
+      "cursor-dir": { type: "string" },
       "state-file": { type: "string" },
       backlog: { type: "string" },
       "buffer-mb": { type: "string" },
@@ -350,7 +366,8 @@ function localCommand(
   const takesDir = command === "share" || command === "unshare";
   if (rest.length > (takesDir ? 1 : 0)) return unexpected(rest[takesDir ? 1 : 0]);
   const allowed = new Set(["state-file", "help", "version", "log-level"]);
-  if (command === "doctor") for (const f of ["server", "projects-dir", "codex-dir"]) allowed.add(f);
+  if (command === "doctor")
+    for (const f of ["server", "projects-dir", "codex-dir", "cursor-dir"]) allowed.add(f);
   const misplaced = Object.keys(values).find((k) => values[k] !== undefined && !allowed.has(k));
   if (misplaced) return { command: "error", message: `--${misplaced} isn't a ${command} option` };
   const str = (k: string) => (typeof values[k] === "string" ? values[k] : undefined);
@@ -384,6 +401,7 @@ function localCommand(
             nodeVersion: process.version,
             projectsDir: str("projects-dir") ?? defaultProjectsDir(),
             codexDir: str("codex-dir") ?? defaultCodexDir(),
+            cursorDir: str("cursor-dir") ?? defaultCursorDir(),
             sharingFile,
             logFile: logFilePath(dirname(stateFile), "daemon"),
             server: str("server"),

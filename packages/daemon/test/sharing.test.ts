@@ -185,6 +185,7 @@ describe("forwarder upgrade", () => {
           port: 0,
           projectsDir: dirs.projectsDir,
           codexDir: dirs.codexDir,
+          cursorDir: dirs.cursorDir,
           stateFile: dirs.stateFile,
           backlog: "all",
           bufferMb: 1,

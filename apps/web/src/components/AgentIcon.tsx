@@ -3,6 +3,7 @@ import type { AgentId } from "@baton/core";
 const LABELS: Record<AgentId, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
+  cursor: "Cursor",
 };
 
 /** Display name of a coding agent. */
@@ -36,13 +37,18 @@ function Prompt() {
   );
 }
 
+/** Cursor arrow. */
+function CursorMark() {
+  return <path fill="currentColor" d="M4 2.5v15l4.2-4 2.7 5 2.5-1.4-2.7-5h5.8z" />;
+}
+
 /** Small badge showing which coding agent a session runs in. */
 export function AgentIcon({ agent }: { agent: AgentId }) {
   const label = agentLabel(agent);
   return (
     <span className={`agent-icon agent-${agent}`} role="img" aria-label={label} title={label}>
       <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
-        {agent === "codex" ? <Prompt /> : <Spark />}
+        {agent === "codex" ? <Prompt /> : agent === "cursor" ? <CursorMark /> : <Spark />}
       </svg>
     </span>
   );

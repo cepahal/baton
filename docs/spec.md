@@ -1,12 +1,13 @@
 # Baton event spec (v2)
 
 Baton is agent-agnostic. It turns the session logs that coding agents write to
-disk into one stream of **`BatonEvent`s**. Two agents are supported:
+disk into one stream of **`BatonEvent`s**. Three agents are supported:
 
 | `agent`       | Session log                                                                              |
 | ------------- | ---------------------------------------------------------------------------------------- |
 | `claude-code` | `~/.claude/projects/<project-slug>/<sessionId>.jsonl`, one JSON record per line          |
 | `codex`       | `~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<threadId>.jsonl`, one JSON record per line |
+| `cursor`      | `~/.cursor/projects/<workspace>/agent-transcripts/<conversation>/<conversation>.jsonl`  |
 
 Each agent has an **adapter** in core (`@baton/core`) that converts its records
 to events as a pure function, and a **source** in the daemon that finds the
@@ -30,7 +31,7 @@ implements this document. When they disagree, fix one of them in the same change
 ```ts
 {
   id: string;          // stable, unique within a session
-  agent: "claude-code" | "codex";
+  agent: "claude-code" | "codex" | "cursor";
   sessionId: string;
   projectPath: string;
   ts: string;          // ISO-8601 with offset
@@ -62,7 +63,7 @@ format, and the **source** (in the daemon) knows how to get the records off disk
 ### `AgentAdapter` (core)
 
 ```ts
-type AgentId = "claude-code" | "codex";
+type AgentId = "claude-code" | "codex" | "cursor";
 type SourceKind = "jsonl-tail" | "rollout-tail";
 
 interface AgentAdapter {
@@ -96,13 +97,14 @@ parseSession(id: AgentId, text: string, opts?: { debug? }): { events, warnings }
 The daemon owns all I/O. Its watcher builds one source per entry in core's
 `AGENT_REGISTRY` (`id`, `source`, `defaultRoots()`, `detect`), rooted at
 `defaultRoots()` unless the user overrides them (`--projects-dir`,
-`--codex-dir`). A root that doesn't exist is skipped; the daemon refuses to start
+`--codex-dir`, `--cursor-dir`). A root that doesn't exist is skipped; the daemon refuses to start
 only if none exist. The watcher still only talks to an `EventSink`.
 
 | Source         | Used by       | How it reads                                                                                                                                                                                                                                        |
 | -------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `jsonl-tail`   | `claude-code` | Watch the roots for `*.jsonl` and tail each file from a saved byte offset. A line is passed to `parse` only once it ends with `\n`. See [daemon.md](daemon.md).                                                                                     |
 | `rollout-tail` | `codex`       | `jsonl-tail` over `~/.codex/sessions/**/rollout-*.jsonl` (the date folders are nested), with all files of one thread fed to one adapter instance, plus `rollout-*.jsonl.zst` read whole when needed. Described under [Codex](#codex-adapter-codex). |
+| `jsonl-tail`   | `cursor`      | Watch `~/.cursor/projects/**/agent-transcripts/**/*.jsonl`; the conversation id comes from the file path. See [Cursor](#cursor-adapter-cursor). |
 
 #### Why Codex is tailed from the rollout
 
@@ -447,6 +449,34 @@ pair of files:
   falls in the same range, one row per line, with `item_json` kept as a string.
   These are the expected-items oracle: every `item_completed` item in the
   rollout should have a row with the same `item_id`.
+
+## Cursor adapter (`cursor`)
+
+Source: `jsonl-tail`. Default root: `~/.cursor/projects` on macOS and Windows.
+Cursor hooks expose the current transcript path as `CURSOR_TRANSCRIPT_PATH`
+when transcript logging is enabled ([Cursor Hooks](https://cursor.com/docs/hooks)).
+The on-disk format is not a versioned public schema. Current local Agent
+transcripts use JSONL rows shaped like `{ role, message: { content } }` under
+`<workspace>/agent-transcripts/`. The conversation id is in the filename, in
+either `<id>.jsonl` or `<id>/<id>.jsonl` layout. Files under
+`agent-transcripts/<parent>/subagents/<child>.jsonl` are detected too.
+
+The daemon derives the `sessionId` from the file name and decodes Cursor's
+workspace folder into an absolute `projectPath` (`C:\…` on Windows,
+`/Users/…` on macOS). A `working_directory` or `cwd` in a tool input updates
+that path when available. This lets the existing repo sharing filter keep
+working for Cursor sessions.
+
+| Cursor transcript content | Baton event |
+| ------------------------- | ----------- |
+| `role: "user"`, string or `text` block | `prompt`; removes Cursor's `<timestamp>` wrapper and extracts `<user_query>` when present |
+| `role: "assistant"`, string or `text` block | `reply` |
+| `role: "assistant"`, `tool_use` block | `tool_call`; generated id is based on session, line and block position |
+
+Cursor transcript rows may omit tool results and reasoning. Baton emits only
+the content present in the JSONL file; it does not synthesize missing results.
+The timestamp in a `<timestamp>` text tag is used when present. If absent, the
+parser uses the time the daemon began following that file.
 
 ## Compaction
 
